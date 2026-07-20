@@ -17,7 +17,7 @@ ARG STUDIO_REF
 # Studio build — produces the tai-studio SPA dist. Splits on SOURCE because a
 # single stage cannot conditionally COPY-from-siblings vs git-fetch inline.
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS studio-base
+FROM node:26-alpine AS studio-base
 # node:22-alpine ships no git, but git is needed both to fetch the release
 # source (studio-pypi) and by tai-studio's own `prepare` hook (lefthook
 # install) that runs on every `pnpm install`.
