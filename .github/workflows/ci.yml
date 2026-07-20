@@ -32,7 +32,7 @@ jobs:
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
   # `siblings` build context does not exist here. SOURCE=pypi therefore requires
-  # every first-party tai-* package to already be published to PyPI. The built
+  # every first-party tai42-* package to already be published to PyPI. The built
   # image is saved and handed to the kind job so it is built once.
   build-smoke:
     runs-on: ubuntu-24.04

@@ -5,7 +5,7 @@
 
 Client distribution for **tai**: the official container image, a Docker Compose
 bundle, a Helm chart, and the release CI that publishes them. One version story
-pins every first-party `tai-*` package.
+pins every first-party `tai42-*` package.
 
 ## Image
 
@@ -33,7 +33,7 @@ docker run --rm docker.io/tai42/tai:latest doctor
 ### Tags
 
 Distribution semver — `X.Y.Z`, `X.Y`, `X`, and `latest`. Each tag pins the
-`tai-*` packages at a matching release.
+`tai42-*` packages at a matching release.
 
 ### Config
 
@@ -52,7 +52,7 @@ FROM docker.io/tai42/tai:latest
 
 ## Building locally
 
-Release builds pull `tai-*` from PyPI and fetch tai-studio at the commit SHA
+Release builds pull `tai42-*` from PyPI and fetch tai-studio at the commit SHA
 recorded in `docker/STUDIO_REF`. A dev build instead uses your local sibling
 checkouts (all `tai-*` repos cloned beside this one). Because the sibling
 context is the parent directory of every checkout — which may hold untracked

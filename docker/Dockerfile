@@ -4,11 +4,11 @@
 
 # One image, two source modes, selected by --build-arg SOURCE=<local|pypi>:
 #   local  — dev build from sibling checkouts (studio built from the local
-#            tai-studio tree; tai-* installed from local package trees). Runs on
+#            tai-studio tree; tai42-* installed from local package trees). Runs on
 #            a LOCAL builder only: the `siblings` named build context is the
 #            parent directory of every checkout and carries untracked secrets.
 #   pypi   — release build (studio built from tai42ai/tai-studio at STUDIO_REF;
-#            tai-* installed from PyPI at pinned ==${VERSION}, binary wheels only).
+#            tai42-* installed from PyPI at pinned ==${VERSION}, binary wheels only).
 ARG SOURCE=pypi
 ARG VERSION=0.1.0
 ARG STUDIO_REF
@@ -49,9 +49,9 @@ COPY --from=siblings \
 # The COPY excludes .git, so init an empty repo; the hooks it installs are inert
 # files never executed during the build.
 RUN git init -q
-# Build recursively (tai-studio's own CI recipe): @tai/studio-app's tsc build
+# Build recursively (tai-studio's own CI recipe): @tai42/studio-app's tsc build
 # references 17 workspace packages' emitting configs, so they must be built
-# first. `pnpm --filter @tai/studio-app build` alone leaves them unbuilt and
+# first. `pnpm --filter @tai42/studio-app build` alone leaves them unbuilt and
 # tsc fails to resolve them. The app build emits apps/studio/dist.
 RUN pnpm install --frozen-lockfile \
  && pnpm -r build
@@ -66,7 +66,7 @@ RUN git init \
  && git remote add origin https://github.com/tai42ai/tai-studio.git \
  && git fetch origin "$STUDIO_REF" \
  && git checkout FETCH_HEAD
-# Build recursively (tai-studio's own CI recipe): @tai/studio-app's tsc build
+# Build recursively (tai-studio's own CI recipe): @tai42/studio-app's tsc build
 # references 17 workspace packages' emitting configs, so they must be built
 # first. The app build emits apps/studio/dist.
 RUN pnpm install --frozen-lockfile \
@@ -154,7 +154,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/tai-accounts-postgres \
       /src/tai-identity-oidc
 
-# Release install: every tai-* package pinned to the image's own VERSION, binary
+# Release install: every tai42-* package pinned to the image's own VERSION, binary
 # wheels only. The slim final image has no compiler — a dependency missing an
 # arm64/amd64 wheel MUST fail the build loudly, never fall into a source build.
 # The pins track VERSION so a tagged image can never ship a different package set

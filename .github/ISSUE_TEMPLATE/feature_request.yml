@@ -6,7 +6,7 @@ body:
     id: description
     attributes:
       label: Description
-      description: What should be added or changed, and what problem does it solve? Remember the one-version story — the image, Compose bundle, and Helm chart move in lockstep and pin the tai-* packages at a matching release.
+      description: What should be added or changed, and what problem does it solve? Remember the one-version story — the image, Compose bundle, and Helm chart move in lockstep and pin the tai42-* packages at a matching release.
     validations:
       required: true
   - type: input

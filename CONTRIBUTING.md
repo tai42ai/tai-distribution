@@ -3,13 +3,13 @@
 `tai-distribution` is the client distribution for **tai**: the official
 container image, a Docker Compose bundle, a Helm chart, and the release CI that
 publishes them. It ships artifacts, not a Python package — one version story
-pins every first-party `tai-*` package.
+pins every first-party `tai42-*` package.
 
 ## Ground rules
 
-- **One version story.** A distribution tag (`X.Y.Z`) pins the `tai-*` packages
+- **One version story.** A distribution tag (`X.Y.Z`) pins the `tai42-*` packages
   at a matching release; keep the image, chart, and compose bundle in lockstep.
-- **Release builds pull from PyPI.** The release image installs `tai-*` from
+- **Release builds pull from PyPI.** The release image installs `tai42-*` from
   PyPI and fetches tai-studio at the SHA in `docker/STUDIO_REF`. Only the dev
   build (`SOURCE=local`) uses local sibling checkouts, and it MUST run on a
   local builder — its context is the parent directory of every checkout, which
@@ -45,6 +45,26 @@ itself changes:
 The existing profiles follow exactly that rule: `celery` (RabbitMQ broker),
 `minio` (S3 backing), `agents-redis` (module-capable Redis) — each exists
 for an infra service, not for the plugin itself.
+
+## Naming
+
+PyPI is a flat namespace with no owner in the path, so distributions carry the
+`tai42-` prefix. GitHub repositories keep their `tai-` names, because the
+`tai42ai` organisation already namespaces them. Import packages follow the
+distribution.
+
+| Surface | Form |
+| --- | --- |
+| Distribution — PyPI, `pip install`, dependency pins | `tai42-<name>` |
+| Import package | `tai42_<name>` |
+| GitHub repository and sibling checkout directory | `tai-<name>` |
+
+So a dependency is declared as `tai42-<name>` but resolved from `../tai-<name>`
+during local development, and both spellings are correct in their own context.
+
+Some surfaces are deliberately neither, and must not be renamed: the `tai` CLI
+command (`tai42` is an alias), the Prometheus metric namespace (`tai_tool_*`),
+`TAI_*` environment variables, and the `tai-plugin.yml` descriptor filename.
 
 ## Dev
 
