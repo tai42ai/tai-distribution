@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose an addition or change to tai-distribution
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What should be added or changed, and what problem does it solve? Remember the one-version story — the image, Compose bundle, and Helm chart move in lockstep and pin the tai-* packages at a matching release.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Distribution version / image tag
+      description: The version you are using, if relevant.
+      placeholder: "0.1.0"
+    validations:
+      required: false

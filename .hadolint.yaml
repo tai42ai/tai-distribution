@@ -1,0 +1,16 @@
+# hadolint config for the tai image build.
+ignored:
+  # DL3018 (pin apk package versions): pinning `apk add` versions ties the build
+  # to Alpine's fast-moving repository index, where old package versions are
+  # pruned without notice — a pinned version breaks the build the moment upstream
+  # rolls it. Leaving apk unpinned is accepted practice for Alpine bases.
+  - DL3018
+  # DL3022 (`COPY --from` must reference a previous stage): the local-source
+  # stages copy from `siblings`, a buildx NAMED BUILD CONTEXT passed as
+  # `--build-context siblings=..`. hadolint resolves stage names only, so it
+  # reports every such COPY even though buildx resolves them.
+  - DL3022
+  # DL3006 (tag the base image): `FROM studio-${SOURCE}` and `FROM venv-${SOURCE}`
+  # select between stages defined above via a build arg. hadolint cannot evaluate
+  # the variable, so it reads them as untagged external images.
+  - DL3006

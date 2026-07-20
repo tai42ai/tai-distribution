@@ -1,0 +1,105 @@
+{{- if include "tai.schemaInit.enabled" . }}
+{{- /*
+Applies the Postgres schema for the enabled PG-backed features via `tai db apply`
+(idempotent IF NOT EXISTS DDL). An init container waits for Postgres to accept
+connections first (a bounded 180s poll), since Helm does not guarantee the DB is
+Ready when the hook runs.
+
+The hook PHASE depends on who owns the database:
+
+  - EXTERNAL Postgres (postgresql.enabled=false): pre-install,pre-upgrade. The
+    DB pre-exists the release, so the schema lands BEFORE any serve/backend pod
+    starts — strict ordering: pods never see a missing schema on install, and
+    migrations land before the new pods roll on upgrade.
+
+  - QUICKSTART Postgres (postgresql.enabled=true): post-install,post-upgrade.
+    The quickstart StatefulSet is a normal release resource, applied only after
+    pre-hooks — a pre-hook would wait on a DB that cannot exist yet. With the
+    post-hook, the serve/backend pods may start before the schema exists and
+    self-heal via crash-restart/startupProbe until it lands. On upgrade the
+    migration lands after the pods roll — acceptable because the DDL is additive
+    IF NOT EXISTS and releases ship schema-compatible. The StatefulSet is
+    deliberately NOT promoted to a hook itself: hook-owned workloads lose normal
+    Helm lifecycle semantics (upgrades, rollbacks, uninstall).
+
+Because a pre-hook runs BEFORE every normal release resource, this pod must not
+reference ANY of them — no shared config mounts, no env Secret, no ConfigMap, no
+release ServiceAccount (each would leave a fresh external-DB install stuck in
+ContainerCreating waiting on objects Helm has not created yet). `tai db apply`
+needs none of that: it reads only the TAI_DB_* schema-admin env set below (the
+CLI's dotenv/config bootstrap no-ops when no .env or TAI_CONFIG_MODE is present),
+so the pod mounts nothing and runs under the namespace default ServiceAccount.
+The db Secret it does reference is safe in both phases: the external shape
+requires postgresql.auth.existingSecret (pre-existing), and the quickstart's
+generated Secret exists by post-hook time.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tai.fullname" . }}-schema-init
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-init
+  annotations:
+    helm.sh/hook: {{ if .Values.postgresql.enabled }}post-install,post-upgrade{{ else }}pre-install,pre-upgrade{{ end }}
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.schemaInit.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "tai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: schema-init
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-db
+          image: {{ include "tai.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - python
+            - -c
+            - |
+              import socket, sys, time
+              host, port = {{ include "tai.postgres.host" . | quote }}, {{ .Values.postgresql.port }}
+              deadline = time.time() + 180
+              while time.time() < deadline:
+                  try:
+                      with socket.create_connection((host, port), timeout=5):
+                          sys.exit(0)
+                  except OSError:
+                      time.sleep(3)
+              sys.exit("timed out waiting for postgres at %s:%s" % (host, port))
+      containers:
+        - name: schema-init
+          image: {{ include "tai.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - db
+            - apply
+          env:
+            - name: TAI_DB_PG_HOST
+              value: {{ include "tai.postgres.host" . | quote }}
+            - name: TAI_DB_PG_PORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: TAI_DB_PG_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: TAI_DB_PG_USER
+              value: {{ .Values.postgresql.username | quote }}
+            - name: TAI_DB_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tai.dbSecretName" . | quote }}
+                  key: {{ include "tai.dbSecretKey" . | quote }}
+{{- end }}

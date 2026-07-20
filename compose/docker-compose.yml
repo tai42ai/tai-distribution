@@ -1,0 +1,447 @@
+# Core TAI self-hosting stack: one batteries-included image run as three
+# processes — serve (HTTP + MCP + Studio), backend worker (task backend), and
+# metrics (Prometheus multiprocess reader) — over postgres + redis.
+#
+# Quickstart:
+#
+#     cp .env.example .env                       # fill in POSTGRES_PASSWORD etc.
+#     mkdir -p config
+#     cp manifest.example.yml config/manifest.yml
+#     touch config/.env                          # app-side env; see .env.example
+#     docker compose up -d
+#
+# `.env` (this directory) holds the deployment's secrets/knobs; Compose reads it
+# automatically for ${VAR} substitution below. `config/` is bind-mounted at /app
+# and holds the app's `manifest.yml` (the file config provider's input); it may
+# also hold an optional `.env` the app loads itself. Both `.env` and `config/`
+# are git-ignored so a filled-in deployment can never be committed.
+#
+# Datastores are NOT host-published — only serve's HTTP port is. Reach postgres
+# and redis over the compose network (hostnames `postgres` / `redis`).
+#
+# Optional profiles (opt in with `--profile <name>`):
+#   minio        — MinIO + bucket init for the tai42_storage_s3 provider.
+#   celery       — RabbitMQ broker for the celery task backend leg. Switch the
+#                  backend by setting TAI_BACKEND_MODULE=tai42_backend_celery in
+#                  `.env` (the manifest's !ENV expansion reads it); the celery
+#                  wiring below is preset on serve/backend and idle under arq.
+#   agents-redis — a module-capable redis:8 (RediSearch + RedisJSON) on its own
+#                  service for the langgraph redis checkpoint/store agents leg.
+
+name: tai
+
+# json-file log rotation so a long-running container cannot fill the host disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "5"
+
+# The batteries-included image, pinned by TAI_VERSION (default `latest`). Built
+# locally for dev (SOURCE=local) or pulled from Docker Hub for a release.
+x-tai-image: &tai-image "docker.io/tai42/tai:${TAI_VERSION:-latest}"
+
+# Runtime env shared by every app process (serve / backend / metrics). Held in
+# one anchor so the three processes can never drift on the connection settings
+# they MUST agree on (the worker bus, the task backend, the metrics multiproc
+# dir). Datastore hostnames are the fixed compose-network names; the single
+# POSTGRES_PASSWORD maps onto every per-feature store password so a deployment
+# has exactly one DB credential to set.
+x-tai-app-env: &tai-app-env
+  # --- config provider (file mode: reads /app/manifest.yml + /app/.env) -------
+  TAI_CONFIG_MODE: file
+  TAI_CONFIG_DIR_PATH: /app
+  TAI_MANIFEST_PATH: /app/manifest.yml
+  # Chosen by the manifest's `backend_module: !ENV ${TAI_BACKEND_MODULE:...}`.
+  # Default arq; set to tai42_backend_celery in .env for the celery profile.
+  TAI_BACKEND_MODULE: "${TAI_BACKEND_MODULE:-tai42_backend_arq}"
+
+  # --- access control ----------------------------------------------------------
+  # Passed through from .env. The example .env ships an explicit `false` (the
+  # docs' auth-free quickstart shape); if you remove the line there, this falls
+  # back to the app's own secure default (`true`) — which then REQUIRES an
+  # identity provider lifecycle module in the manifest and public-pinned probe
+  # routes, or boot refuses loudly. See the access-control guide before enabling.
+  ACCESS_CONTROL_ENABLE: "${ACCESS_CONTROL_ENABLE:-true}"
+
+  # --- worker bus + MCP session store (BOTH mandatory) ------------------------
+  # Multi-worker serve refuses to boot without the bus (siblings would serve
+  # stale config after a reload), and a registered task backend refuses to boot
+  # without it (the backend-runtime and server processes must converge). The MCP
+  # session store is what makes --stateless-http multi-worker coherent.
+  TAI_BUS_REDIS_URL: redis://redis:6379/0
+  SUB_MCP_REDIS_URL: redis://redis:6379/0
+
+  # --- arq task backend (default) ---------------------------------------------
+  ARQ_REDIS_URL: redis://redis:6379/0
+
+  # --- celery task backend (celery profile; idle under arq) -------------------
+  # Preset always: a Compose profile cannot mutate another service's env, so the
+  # broker wiring lives here and only activates when TAI_BACKEND_MODULE selects
+  # celery. The broker is RabbitMQ; results + the RedBeat schedule store ride the
+  # core redis. RABBITMQ_PASSWORD is substituted without a required-guard here so
+  # the default (profile-less) stack starts without it; the rabbitmq service
+  # itself guards it, so bringing up the celery profile unset fails loudly.
+  CELERY_BROKER_URL: "amqp://${RABBITMQ_USER:-tai}:${RABBITMQ_PASSWORD:-}@rabbitmq:5672//"
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+  CELERY_REDBEAT_REDIS_URL: redis://redis:6379/0
+
+  # --- other feature redis stores (all on the core redis) ---------------------
+  TAI_TOOL_RUNS_REDIS_URL: redis://redis:6379/0
+  TAI_RATE_LIMIT_REDIS_URL: redis://redis:6379/0
+  INTERACTIONS_REDIS_URL: redis://redis:6379/0
+  HOOKS_REDIS_URL: redis://redis:6379/0
+  ACCESS_CONTROL_REDIS_URL: redis://redis:6379/0
+  CONNECTOR_STORE_REDIS_URL: redis://redis:6379/0
+
+  # --- postgres-backed stores (used when the manifest enables the feature) ----
+  # Every store targets the same postgres/db/user; the one POSTGRES_PASSWORD is
+  # required (no working default) so an unchanged deployment cannot ship a shared
+  # credential.
+  # TAI_DB_* is the schema-admin connection: db-init applies the DDL through it,
+  # and `tai doctor`'s postgres/schema probes read it — so it lives in the shared
+  # env, pointed at the same database as the runtime stores.
+  TAI_DB_PG_HOST: postgres
+  TAI_DB_PG_PORT: "5432"
+  TAI_DB_PG_DB: "${POSTGRES_DB:-tai}"
+  TAI_DB_PG_USER: "${POSTGRES_USER:-tai}"
+  TAI_DB_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  ACCESS_CONTROL_STORE_PG_HOST: postgres
+  ACCESS_CONTROL_STORE_PG_PORT: "5432"
+  ACCESS_CONTROL_STORE_PG_DB: "${POSTGRES_DB:-tai}"
+  ACCESS_CONTROL_STORE_PG_USER: "${POSTGRES_USER:-tai}"
+  ACCESS_CONTROL_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  CONNECTOR_STORE_PG_HOST: postgres
+  CONNECTOR_STORE_PG_PORT: "5432"
+  CONNECTOR_STORE_PG_DB: "${POSTGRES_DB:-tai}"
+  CONNECTOR_STORE_PG_USER: "${POSTGRES_USER:-tai}"
+  CONNECTOR_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  MARKETPLACE_STORE_PG_HOST: postgres
+  MARKETPLACE_STORE_PG_PORT: "5432"
+  MARKETPLACE_STORE_PG_DB: "${POSTGRES_DB:-tai}"
+  MARKETPLACE_STORE_PG_USER: "${POSTGRES_USER:-tai}"
+  MARKETPLACE_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  VERSIONING_STORE_PG_HOST: postgres
+  VERSIONING_STORE_PG_PORT: "5432"
+  VERSIONING_STORE_PG_DB: "${POSTGRES_DB:-tai}"
+  VERSIONING_STORE_PG_USER: "${POSTGRES_USER:-tai}"
+  VERSIONING_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+
+  # --- Prometheus multiprocess dir (same path, per-writer volume) --------------
+  # An absolute path the app makes on boot, mounted over the tai user's home
+  # (/home/tai is tai-owned in the image, so a fresh named volume inherits that
+  # ownership and the non-root uid-1000 process can write the multiproc files).
+  # prometheus_client names its per-process files by PID, and each container has
+  # its own PID namespace — so serve's workers and the backend worker WOULD
+  # collide on identical filenames if they shared one volume. The path is the
+  # same everywhere, but the writers are isolated by volume: serve + metrics
+  # share `tai-prometheus` (metrics reads what serve writes); backend rides its
+  # own `tai-prometheus-backend` (see the backend service).
+  PROMETHEUS_MULTIPROC_DIR: /home/tai/prometheus
+
+  # --- S3 object storage (minio profile; used when the manifest loads it) ------
+  # MINIO_ROOT_PASSWORD is substituted without a required-guard here so the
+  # default (profile-less) stack starts without it; the minio and minio-init
+  # services guard it, so bringing up the minio profile unset fails loudly.
+  STORAGE_S3_ENDPOINT: http://minio:9000
+  STORAGE_S3_BUCKET: "${STORAGE_S3_BUCKET:-tai}"
+  STORAGE_S3_ACCESS_KEY: "${MINIO_ROOT_USER:-tai}"
+  STORAGE_S3_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-}"
+  STORAGE_S3_SECURE: "false"
+  STORAGE_S3_REGION: us-east-1
+
+services:
+  # ---- db-init: one-shot schema apply --------------------------------------
+  # Applies the app's bundled DDL (idempotent, IF NOT EXISTS throughout) through
+  # the TAI_DB_* schema-admin connection before serve/backend start — their
+  # startup handlers read framework tables and fail loudly on a bare database.
+  # Exits 0 when the schema is in place; serve/backend gate on that completion.
+  db-init:
+    image: *tai-image
+    logging: *default-logging
+    command: ["db", "apply"]
+    environment: *tai-app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ---- serve: HTTP API + MCP + same-origin Studio SPA ----------------------
+  serve:
+    image: *tai-image
+    logging: *default-logging
+    restart: unless-stopped
+    # Explicit multi-worker: serve's own default is 1 worker (silently
+    # single-worker without this), and workers>1 on the default stateful http
+    # transport is refused at boot unless --stateless-http is set. Bind 0.0.0.0
+    # so the published port is reachable from outside the container.
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--stateless-http"]
+    environment: *tai-app-env
+    volumes:
+      - ./config:/app
+      - tai-prometheus:/home/tai
+    ports:
+      - "${TAI_SERVE_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    # Explicit per-service healthcheck (probes serve's own :8000/health via the
+    # Python stdlib — the image ships no curl/wget). Generous start_period:
+    # boot does manifest-driven dynamic imports with variable startup time, and a
+    # start_period of 0 would flap slow boots to unhealthy and break
+    # depends_on: service_healthy.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---- backend: the task backend worker (arq default / celery profile) -----
+  backend:
+    image: *tai-image
+    logging: *default-logging
+    restart: unless-stopped
+    command: ["backend", "worker"]
+    environment: *tai-app-env
+    volumes:
+      - ./config:/app
+      # Own multiproc volume (NOT the shared tai-prometheus): the backend worker
+      # names its Prometheus files by PID in its own PID namespace and would
+      # collide with serve's workers on identical filenames if they shared a
+      # volume. These backend metrics are NOT scraped in the compose quickstart
+      # (the metrics reader below rides serve's volume). In the chart they ARE
+      # exposed — the backend pod carries its own metrics sidecar.
+      - tai-prometheus-backend:/home/tai
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    # The worker has no HTTP listener, so the baked serve probe (:8000/health)
+    # would leave it permanently unhealthy. Probe the bus redis instead — the
+    # worker is useless without it, and it is present under every backend leg.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import os,sys,redis; sys.exit(0 if redis.from_url(os.environ['TAI_BUS_REDIS_URL']).ping() else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---- metrics: the standalone Prometheus multiprocess reader --------------
+  metrics:
+    image: *tai-image
+    logging: *default-logging
+    restart: unless-stopped
+    # backend_metrics_host defaults to 127.0.0.1 (unreachable via the container
+    # IP), so bind 0.0.0.0 for cross-container scraping.
+    command: ["metrics", "--host", "0.0.0.0", "--port", "8012"]
+    environment: *tai-app-env
+    volumes:
+      - ./config:/app
+      # Reads serve's multiproc dir — shares the tai-prometheus volume with serve
+      # (the writer). The backend worker writes to its own volume, unscraped here.
+      - tai-prometheus:/home/tai
+    depends_on:
+      redis:
+        condition: service_healthy
+    # The metrics server DOES listen on HTTP, but on the metrics port — not
+    # serve's :8000 — so the baked probe would ride the wrong port. Probe
+    # :8012/metrics.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,urllib.error,sys\ntry:\n    sys.exit(0 if urllib.request.urlopen('http://localhost:8012/metrics').status < 500 else 1)\nexcept urllib.error.HTTPError as e:\n    sys.exit(0 if e.code < 500 else 1)\nexcept OSError:\n    sys.exit(1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---- core datastores -----------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    logging: *default-logging
+    restart: unless-stopped
+    # Creates the `tai` database on first boot (POSTGRES_DB). No working default
+    # password — required so an unchanged deployment cannot share a credential.
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-tai}"
+      POSTGRES_DB: "${POSTGRES_DB:-tai}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+    volumes:
+      - tai-postgres-data:/var/lib/postgresql/data
+    # Not host-published: reached over the compose network only.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tai} -d ${POSTGRES_DB:-tai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    logging: *default-logging
+    restart: unless-stopped
+    # Internal-only (never host-published), so it runs without auth to keep the
+    # connection URLs simple; the app reaches it over the compose network.
+    # --appendonly yes for durability parity with the chart's redis: feature
+    # stores (rate limits, tool runs, interactions, hooks, …) live here, so the
+    # AOF must survive a restart rather than losing everything since the last
+    # RDB snapshot.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - tai-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ---- minio profile: S3-compatible object storage for tai42_storage_s3 ------
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: ["minio"]
+    logging: *default-logging
+    restart: unless-stopped
+    # Compose interpolates EVERY service in this file, including ones no active
+    # profile selects, so a `${VAR:?}` guard here would also block the default
+    # profile-less stack. The credential is therefore substituted unguarded and
+    # checked at container start instead: unset means exit non-zero with the
+    # reason, never a silent boot on an empty password.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -z "$$MINIO_ROOT_PASSWORD" ]; then
+          echo "ERROR: MINIO_ROOT_PASSWORD is not set in .env — required by the minio profile" >&2
+          exit 1
+        fi
+        exec /usr/bin/docker-entrypoint.sh "$$@"
+      - sh
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-tai}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-}"
+    volumes:
+      - tai-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # One-shot: create the STORAGE_S3_BUCKET so the provider has somewhere to write
+  # (exits 0 once done; not a long-running service).
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: ["minio"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-tai}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-}"
+      STORAGE_S3_BUCKET: "${STORAGE_S3_BUCKET:-tai}"
+    # Credential checked at start rather than through a `${VAR:?}` guard: Compose
+    # interpolates profile-gated services even when their profile is inactive, so
+    # the guard would also block the default stack. Passed via the environment so
+    # the secret never lands in the container's argv.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -eu
+        if [ -z "$$MINIO_ROOT_PASSWORD" ]; then
+          echo "ERROR: MINIO_ROOT_PASSWORD is not set in .env — required by the minio profile" >&2
+          exit 1
+        fi
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$STORAGE_S3_BUCKET"
+    restart: "no"
+
+  # ---- celery profile: the RabbitMQ broker ---------------------------------
+  # Adds ONLY the broker; the celery wiring on serve/backend is preset in the
+  # shared env above. A custom (non-guest) user works over the compose network
+  # without RabbitMQ's loopback-user restriction.
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles: ["celery"]
+    logging: *default-logging
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:-tai}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:-}"
+    # Credential checked at start rather than through a `${VAR:?}` guard: Compose
+    # interpolates profile-gated services even when their profile is inactive, so
+    # the guard would also block the default stack. RabbitMQ would otherwise
+    # accept an empty RABBITMQ_DEFAULT_PASS and quietly leave the broker without
+    # the intended credential.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -z "$$RABBITMQ_DEFAULT_PASS" ]; then
+          echo "ERROR: RABBITMQ_PASSWORD is not set in .env — required by the celery profile" >&2
+          exit 1
+        fi
+        exec docker-entrypoint.sh "$$@"
+      - sh
+    command: ["rabbitmq-server"]
+    volumes:
+      - tai-rabbitmq-data:/var/lib/rabbitmq
+      # Permit celery's transient non-exclusive control queues on RabbitMQ 4
+      # (denied by default; Queue.declare -> 541). Mounted alongside the image's
+      # conf.d defaults, which stay in effect.
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-tai.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  # ---- agents-redis profile: module-capable redis for the langgraph leg -----
+  # redis:8 bundles RediSearch + RedisJSON, which the plain core redis:7 lacks.
+  # Point the agents checkpoint/store config at redis://redis-agents:6379 in your
+  # manifest/env to use it. A separate service so it never shares the core
+  # redis's state.
+  redis-agents:
+    image: redis:8
+    profiles: ["agents-redis"]
+    logging: *default-logging
+    restart: unless-stopped
+    volumes:
+      - tai-redis-agents-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  tai-postgres-data:
+  tai-redis-data:
+  tai-prometheus:
+  tai-prometheus-backend:
+  tai-minio-data:
+  tai-rabbitmq-data:
+  tai-redis-agents-data:

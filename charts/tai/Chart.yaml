@@ -1,0 +1,35 @@
+apiVersion: v2
+name: tai
+description: >-
+  The TAI application chart — one batteries-included image running the serve,
+  backend worker, and metrics processes, with optional first-party quickstart
+  Postgres and Redis. External-endpoints-first: point every dependency at your
+  own managed Postgres/Redis/Langfuse, or let the chart run the quickstart
+  StatefulSets for a self-contained trial.
+type: application
+
+# Native sidecars (the metrics initContainer with restartPolicy: Always) are GA
+# in Kubernetes 1.29; older kubelets leave the pod hanging in Init.
+kubeVersion: ">=1.29.0-0"
+
+# Chart semver. The release workflow stamps this from the release tag when it
+# packages the chart; the value here is what a local `helm package` produces.
+version: 0.1.0
+
+# The default application image version this chart targets. Overridable with
+# image.tag; when image.tag is empty the chart uses this value. The release
+# workflow stamps it from the same tag that publishes the image.
+appVersion: "0.1.0"
+
+home: https://tai42.ai
+sources:
+  - https://github.com/tai42ai/tai-distribution
+maintainers:
+  - name: tai42
+    email: oss@tai42.ai
+keywords:
+  - mcp
+  - ai
+  - self-hosted
+  - agents
+icon: https://tai42.ai/favicon.png

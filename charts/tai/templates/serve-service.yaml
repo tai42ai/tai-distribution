@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tai.fullname" . }}-serve
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: serve
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "tai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: serve
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      # Numeric, not the named port: named ports on restartable init
+      # containers (native sidecars) don't reach EndpointSlices before
+      # Kubernetes 1.33.
+      targetPort: {{ .Values.metrics.port }}
+      protocol: TCP
+    {{- end }}

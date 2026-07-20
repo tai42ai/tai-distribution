@@ -1,0 +1,170 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Minimal by default; no job in this workflow publishes anything.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Local-only smoke tag. Built once by `build-smoke`, handed to the kind job as
+  # a saved tarball. Never pushed.
+  IMAGE_REF: tai-ci:${{ github.sha }}
+
+jobs:
+  # Dockerfile lint. The Dockerfile uses the docker/dockerfile:1.7-labs frontend
+  # (COPY --exclude); hadolint parses the instructions statically.
+  hadolint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: docker/Dockerfile
+
+  # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
+  # SOURCE=local: a hosted runner checks out only this repository, so the
+  # `siblings` build context does not exist here. SOURCE=pypi therefore requires
+  # every first-party tai-* package to already be published to PyPI. The built
+  # image is saved and handed to the kind job so it is built once.
+  build-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Read STUDIO_REF
+        id: studio
+        run: echo "ref=$(cat docker/STUDIO_REF)" >> "$GITHUB_OUTPUT"
+      - name: Build (SOURCE=pypi, amd64)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE_REF }}
+          build-args: |
+            SOURCE=pypi
+            STUDIO_REF=${{ steps.studio.outputs.ref }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # Fail on FIXABLE critical/high only (--ignore-unfixed): unfixed base-image
+      # CVEs must not block a PR forever. Trivy auto-reads the checked-in
+      # .trivyignore from the repo root, so justified exceptions are respected.
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+      - name: Save image for the kind job
+        run: docker save "${IMAGE_REF}" -o /tmp/tai-image.tar
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tai-image
+          path: /tmp/tai-image.tar
+          retention-days: 1
+
+  # Validate every compose file and every profile it declares. Defensive glob:
+  # core compose (A3: compose/docker-compose.yml with profiles minio|celery|
+  # agents-redis) and the langfuse compose (A4: compose/langfuse/
+  # docker-compose.yml) land later — the glob picks them up automatically, and
+  # `config --profiles` discovers each file's profiles with no hardcoded list.
+  # Before A3/A4 land, no files match and the job passes with a clear notice.
+  compose-config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: docker compose config (all files + profiles)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          files=(compose/**/docker-compose.yml)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::notice::no compose files under compose/ yet (A3 core / A4 langfuse not landed); nothing to validate"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "== ${f} (base) =="
+            docker compose -f "${f}" config -q
+            while IFS= read -r p; do
+              [[ -n "${p}" ]] || continue
+              echo "== ${f} (profile: ${p}) =="
+              docker compose -f "${f}" --profile "${p}" config -q
+            done < <(docker compose -f "${f}" config --profiles)
+          done
+
+  # Detect whether the Helm chart is present; the helm jobs are gated on this.
+  # When charts/tai is absent they are skipped rather than failing, so a
+  # checkout without the chart still reports green.
+  detect-chart:
+    runs-on: ubuntu-24.04
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - id: check
+        run: |
+          if [[ -f charts/tai/Chart.yaml ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::charts/tai not present; skipping helm lint/template/kind-install"
+          fi
+
+  # helm lint + template matrix + kind install test. Gated on the chart existing.
+  helm:
+    needs: [detect-chart, build-smoke]
+    if: needs.detect-chart.outputs.present == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+      - name: helm lint
+        run: helm lint charts/tai
+      # Template matrix — bare defaults plus each scenario fixture the chart ships
+      # in its conventional ci/ values dir (A5 provides defaults / external-
+      # everything / celery fixtures).
+      - name: helm template matrix
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          echo "== helm template (defaults) =="
+          helm template tai charts/tai >/dev/null
+          fixtures=(charts/tai/ci/*-values.yaml)
+          if [[ ${#fixtures[@]} -eq 0 ]]; then
+            echo "::warning::no charts/tai/ci/*-values.yaml fixtures found; rendered defaults only"
+          fi
+          for vf in "${fixtures[@]}"; do
+            echo "== helm template -f ${vf} =="
+            helm template tai charts/tai -f "${vf}" >/dev/null
+          done
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
+      - name: Install kind
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.32.0
+          KIND_SHA256=50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+          curl -fsSLo /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  /tmp/kind" | sha256sum -c -
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tai-image
+          path: /tmp
+      - name: Load smoke image
+        run: docker load -i /tmp/tai-image.tar
+      - name: kind install test
+        run: charts/test/kind-install.sh "${IMAGE_REF}"

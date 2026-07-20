@@ -1,0 +1,56 @@
+#| validate: manifest
+# Minimal working TAI manifest for the compose bundle.
+#
+#   cp manifest.example.yml config/manifest.yml
+#
+# It is bind-mounted at /app/manifest.yml (the file config provider's input) and
+# every section is optional — an empty manifest ({}) boots a bare MCP server.
+
+# --- Task backend -----------------------------------------------------------
+# Selected by the TAI_BACKEND_MODULE env var through pyaml_env's !ENV expansion.
+# The default separator is a SINGLE colon (pyaml_env default_sep=':'), so the
+# form is ${VAR:default}, NOT the shell ${VAR:-default}: with unset
+# TAI_BACKEND_MODULE this resolves to `tai42_backend_arq` (the compose serve/
+# backend env also presets that default). Set TAI_BACKEND_MODULE=tai42_backend_celery
+# in .env (with `--profile celery`) to switch the leg to celery + RabbitMQ.
+#
+# A registered backend REQUIRES the worker bus — the compose presets
+# TAI_BUS_REDIS_URL on serve and backend, so the boot rules are satisfied.
+backend_module: !ENV ${TAI_BACKEND_MODULE:tai42_backend_arq}
+
+# --- HTTP routers -----------------------------------------------------------
+# Every HTTP route is opt-in at its module's import: without this list the
+# server exposes no /health, /ready, /api/* routes, and no Studio SPA. The
+# `plugins` router (the Studio SPA catch-all) MUST stay LAST — routes match in
+# registration order and its catch-all would shadow later siblings.
+routers_modules:
+  - tai42_skeleton.routers.health        # /health (liveness) + /ready (readiness)
+  - tai42_skeleton.routers.metrics       # in-app /metrics
+  - tai42_skeleton.routers.tools         # /api/tools*, /api/run-tool
+  - tai42_skeleton.routers.config        # /api/config*
+  - tai42_skeleton.routers.manifest      # /api/manifest*
+  - tai42_skeleton.routers.tool_runs     # /api/tool-runs* (background runs)
+  - tai42_skeleton.routers.schedules     # /api/schedules*
+  - tai42_skeleton.routers.backend       # /api/backend + /api/fleet/*
+  - tai42_skeleton.routers.plugins       # Studio SPA at / — keep LAST
+
+# --- Identity provider (needed when ACCESS_CONTROL_ENABLE=true) --------------
+# The skeleton ships no concrete identity provider; a deployment with the auth
+# gate on MUST name one. The default redis-backed api-key provider registers
+# itself as the "redis" provider at import. With the example .env's
+# ACCESS_CONTROL_ENABLE=false this stays off; uncomment when you enable the gate.
+# lifecycle_modules:
+#   - tai42_identity_redis.redis_api_key_provider
+
+# --- Tools ------------------------------------------------------------------
+# One toolbox tool, branched onto the task backend so a backend round-trip is
+# exercisable out of the box: `sync_task` branches `current_time_info` into
+# `current_time_info_sync_task`, which queues the tool on the worker (arq/celery)
+# and waits for its result. The `sync_task` extension is registered by importing
+# `backend_module` above, so no `extensions_modules` entry is needed.
+tools:
+  - title: toolbox-time
+    module: tai42_toolbox.tools.current_time_info
+    include: [current_time_info]
+    extensions:
+      current_time_info: [[sync_task]]

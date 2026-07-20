@@ -1,0 +1,535 @@
+# Default values for the tai chart.
+#
+# Every credential field ships EMPTY or as a non-functional placeholder. There is
+# no working default password anywhere in this file: the chart generates a random
+# Postgres password at install time (see `postgresql.auth`), and every external
+# secret (LLM keys, Langfuse keys, external DB URLs) is supplied by you via
+# `config.env` or, better, an `config.existingSecret`.
+
+# -----------------------------------------------------------------------------
+# Image
+# -----------------------------------------------------------------------------
+image:
+  # The batteries-included application image. Same image runs serve / backend /
+  # metrics.
+  repository: docker.io/tai42/tai
+  # Image tag. Empty string means "use the chart appVersion" (see Chart.yaml).
+  tag: ""
+  # IfNotPresent for normal installs; the kind test harness overrides this to
+  # Never so a locally-loaded image is used and a missing image fails loudly
+  # instead of pulling.
+  pullPolicy: IfNotPresent
+
+# imagePullSecrets for a private registry mirror (ghcr, etc.). List of {name: ...}.
+imagePullSecrets: []
+
+# Override the generated resource name stem.
+nameOverride: ""
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# ServiceAccount
+# -----------------------------------------------------------------------------
+serviceAccount:
+  # Create a dedicated ServiceAccount for the app pods.
+  create: true
+  # Use an existing ServiceAccount name instead of creating one. Empty = the
+  # generated name (when create is true) or "default" (when create is false).
+  name: ""
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Serve (the HTTP / MCP server)
+# -----------------------------------------------------------------------------
+serve:
+  # Pod replicas. Independent of `serve.workers` (in-process uvicorn workers).
+  replicaCount: 1
+
+  # In-process worker processes per pod (`tai serve --workers N`).
+  #
+  # workers > 1 on the default (stateful) http transport is REFUSED at boot
+  # unless `stateless_http` is true, and ALSO requires the worker bus
+  # (TAI_BUS_REDIS_URL) and a shared sub-MCP store (SUB_MCP_REDIS_URL) — both of
+  # which the chart wires from the redis endpoint automatically. The bus is
+  # additionally required whenever a task backend is enabled (see `backend`),
+  # regardless of worker count, so it is wired unconditionally.
+  workers: 1
+  # Lift the single-worker restriction on the http transport. Set true when
+  # workers > 1.
+  statelessHttp: false
+
+  # The transport tai serve runs. http/streamable-http are the network
+  # transports; only these support multiple workers (with statelessHttp).
+  transport: http
+
+  # The port serve binds inside the pod. This ONE value drives the container
+  # port, both HTTP probes (startup/liveness/readiness), and the Service
+  # targetPort — there is no second port to keep in sync.
+  port: 8000
+
+  # Bind address inside the pod. Must be 0.0.0.0 so the Service can reach it via
+  # the pod IP (serve's own default of 127.0.0.1 is unreachable from outside the
+  # pod).
+  host: 0.0.0.0
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+  # Startup probe: boot runs manifest-driven dynamic imports with variable
+  # startup time. A generous failureThreshold keeps the liveness probe from
+  # killing a slow-but-healthy boot into a restart loop.
+  startupProbe:
+    enabled: true
+    periodSeconds: 5
+    failureThreshold: 60
+    timeoutSeconds: 3
+
+  # Liveness: pure /health (process-up). Never /ready — a worker whose store is
+  # briefly unreachable is still live and must not be killed.
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Readiness: /ready pings every wired backing store; a worker whose store is
+  # down is pulled from the Service until it recovers.
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Extra command-line args appended to `tai serve`.
+  extraArgs: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+  # Extra volumes / volumeMounts merged onto the serve pod (e.g. a writable
+  # emptyDir for a store the app persists to).
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  # Optional HorizontalPodAutoscaler for the serve Deployment.
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: null
+
+  # Optional PodDisruptionBudget for the serve Deployment.
+  pdb:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: null
+
+# -----------------------------------------------------------------------------
+# Backend (the task worker)
+# -----------------------------------------------------------------------------
+backend:
+  # Run a backend worker Deployment. The default provider is arq (Redis-only).
+  # A registered task backend requires the worker bus (TAI_BUS_REDIS_URL), which
+  # the chart wires automatically — and so does the serve process, since the
+  # backend module in the shared manifest makes serve refuse a busless boot too.
+  enabled: true
+
+  replicaCount: 1
+
+  # Provider: "arq" (default, Redis) or "celery" (external broker). This selects
+  # the manifest `backend_module` and injects the matching connection env.
+  type: arq
+
+  # arq connection. Empty redisUrl = derive from the chart's redis endpoint.
+  arq:
+    redisUrl: ""
+
+  # celery connection. Supply your own external broker/result-backend — the
+  # chart ships no RabbitMQ (bring your own, per external-endpoints-first).
+  # brokerUrl has no default: with type=celery the render fails until it is set,
+  # so an install can never silently dial someone else's broker. Shape:
+  # amqp://user:password@host:5672//
+  celery:
+    brokerUrl: ""
+    resultBackend: ""
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+  # The worker has no HTTP listener, so it gets an explicit process liveness
+  # probe (never serve's HTTP probes). The default check confirms the worker
+  # command is still PID 1, using only the Python stdlib present in the image
+  # (python:3.13-slim ships no pgrep). Override the command for a bespoke check.
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+    exec:
+      command:
+        - python
+        - -c
+        - |
+          import sys
+          cmd = open("/proc/1/cmdline", "rb").read().decode("utf-8", "ignore")
+          sys.exit(0 if "backend" in cmd else 1)
+
+  # Extra args appended to `tai backend worker` (e.g. a celery scheduler runs as
+  # its own Deployment; this chart deploys the worker only).
+  extraArgs: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# -----------------------------------------------------------------------------
+# Metrics
+# -----------------------------------------------------------------------------
+# The `tai metrics` server renders the shared Prometheus multiprocess directory
+# (PROMETHEUS_MULTIPROC_DIR). That directory is shared WITHIN a pod between the
+# app process family and the metrics reader over an emptyDir — it cannot be
+# shared across pods. So metrics runs as a SIDECAR container in BOTH the serve
+# and backend Deployments, each with its own emptyDir. (Decision recorded in
+# the chart README.)
+metrics:
+  enabled: true
+  # The sidecar binds this port. backendMetricsHost is forced to 0.0.0.0 so the
+  # port is reachable over the pod IP for scraping (its default 127.0.0.1 is not).
+  port: 8012
+  # Absolute path shared between the app and the metrics sidecar. Must be
+  # absolute (the setting validator rejects a relative path). The emptyDir is
+  # mounted at this path's PARENT directory: the app writes a lock file as a
+  # sibling of this dir (`<multiprocDir>.lock`), so the parent must be on the
+  # writable volume too.
+  multiprocDir: /var/run/tai/prometheus
+  # The sidecar's steady-state resident set is ~120Mi (uvicorn + FastAPI +
+  # prometheus_client); the limit carries headroom above that so transient
+  # allocation spikes cannot OOM-kill a healthy sidecar.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  # Prometheus-operator ServiceMonitor. Requires the operator's CRD installed in
+  # the cluster (a documented prerequisite; not bundled).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    path: /metrics
+
+# -----------------------------------------------------------------------------
+# Service
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  # HTTP port on the Service; targets serve.port.
+  port: 80
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Ingress (Studio is served same-origin as the API — a single host and path)
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # Single host, single path: the Studio SPA and the /api surface share one
+  # origin, so there is nothing to split across hosts/paths.
+  host: tai.example.com
+  path: /
+  pathType: Prefix
+  tls: []
+  #  - secretName: tai-tls
+  #    hosts:
+  #      - tai.example.com
+
+# -----------------------------------------------------------------------------
+# Configuration (env + manifest)
+# -----------------------------------------------------------------------------
+config:
+  # Config source mode:
+  #   file : (default) the chart renders a Secret (.env) and a ConfigMap
+  #          (manifest.yml) and mounts them read-only at /app. Static config.
+  #   k8s  : the tai42-config-k8s plugin reads env from a Secret and the manifest
+  #          from a ConfigMap via the Kubernetes API (dynamic multi-pod config).
+  #          The chart grants the ServiceAccount read access to them (RBAC).
+  mode: file
+
+  # Values-rendered env, written into the .env Secret (file mode) or the env
+  # Secret the k8s provider reads (k8s mode). Put NON-secret settings and, if you
+  # must, secrets here — but prefer `config.existingSecret` for anything
+  # sensitive. Every value here lands in a Secret. Example knobs (commented):
+  env: {}
+  #   # LLM provider keys (supply via existingSecret in production):
+  #   OPENAI_API_KEY: ""
+  #   ANTHROPIC_API_KEY: ""
+  #   # Log level:
+  #   TAI_LOG_LEVEL: INFO
+
+  # The manifest.yml content. This default boots a working server — health
+  # probes, the /api/* operator routes, and the Studio SPA — plus the backend
+  # provider the chart injects. Replace with your own tools/agents/mcp manifest.
+  # The backend_module line is managed by the chart from `backend.type`; do not
+  # set backend_module here.
+  #
+  # routers_modules: every HTTP route is opt-in at its module's import — without
+  # a module here its routes do not exist. `health` registers `/health` and
+  # `/ready`, the exact paths the serve Deployment's startup/liveness/readiness
+  # probes and the `helm test` pod hit; drop it only if you replace those probe
+  # paths too. The `plugins` router (the Studio SPA catch-all at /) MUST stay
+  # LAST — routes match in registration order and its catch-all would shadow
+  # later siblings.
+  manifest: |
+    # tai manifest — see https://tai42.ai/concepts/manifest
+    lifecycle_modules: []
+    routers_modules:
+      - tai42_skeleton.routers.health        # /health (liveness) + /ready (readiness)
+      - tai42_skeleton.routers.metrics       # in-app /metrics
+      - tai42_skeleton.routers.tools         # /api/tools*, /api/run-tool
+      - tai42_skeleton.routers.config        # /api/config*
+      - tai42_skeleton.routers.manifest      # /api/manifest*
+      - tai42_skeleton.routers.tool_runs     # /api/tool-runs* (background runs)
+      - tai42_skeleton.routers.schedules     # /api/schedules*
+      - tai42_skeleton.routers.backend       # /api/backend + /api/fleet/*
+      - tai42_skeleton.routers.plugins       # Studio SPA at / — keep LAST
+    tools: []
+    agents: []
+    mcp: []
+
+  # Escape hatches: use pre-existing objects instead of the rendered ones.
+  #   existingSecret     : a Secret whose key `.env` holds the env file (file
+  #                        mode), or whose keys are the env vars (k8s mode reads
+  #                        the whole Secret). Must be in the release namespace.
+  #   existingConfigMap  : a ConfigMap whose key `manifest.yml` holds the manifest.
+  #                        NOTE: the chart injects `backend_module` (from
+  #                        backend.type) only into the manifest it renders. With
+  #                        existingConfigMap the chart cannot touch your manifest,
+  #                        so YOU must set backend_module in it to match
+  #                        backend.type (arq -> tai42_backend_arq,
+  #                        celery -> tai42_backend_celery).
+  existingSecret: ""
+  existingConfigMap: ""
+
+# -----------------------------------------------------------------------------
+# Feature stores
+# -----------------------------------------------------------------------------
+# Each PG-backed feature is OFF by default and, when enabled, is wired to the
+# chart's Postgres endpoint (host/port/db/user + the generated password) and
+# adds its schema to the `tai db apply` init hook. The rate limiter, interactions,
+# tool-runs, hooks and access-control Redis URLs are wired to the chart's Redis
+# endpoint unconditionally (inert until used) so those features work out of the
+# box. The connector store's Redis URL is the exception: the app treats any
+# CONNECTOR_STORE_* env presence as "connectors in use" and opens the connector
+# catalog's Postgres at boot, so it is wired only when features.connectors is on,
+# alongside its Postgres half — never unconditionally.
+features:
+  # Access control (authn/authz). OFF by default so the quickstart boots with no
+  # identity provider or key seeding. Turning it on requires naming an identity
+  # provider in the manifest lifecycle_modules and public-pinning /health and
+  # /ready — see the chart README before enabling in production.
+  accessControl:
+    enabled: false
+  # Presets + policy history (Postgres-backed).
+  versioning:
+    enabled: false
+  # Accounts (tai42-accounts-postgres).
+  accounts:
+    enabled: false
+  # OAuth connector store.
+  connectors:
+    enabled: false
+  # Marketplace plugin store.
+  marketplace:
+    enabled: false
+
+# -----------------------------------------------------------------------------
+# Schema init (tai db apply)
+# -----------------------------------------------------------------------------
+# A post-install/post-upgrade Helm hook Job that applies the Postgres schema
+# (`tai db apply`, idempotent IF NOT EXISTS DDL) for the enabled PG-backed
+# features. "auto" enables it whenever any PG feature above is on; set true/false
+# to force it. It waits for the DB to accept connections, then applies.
+schemaInit:
+  enabled: auto
+  backoffLimit: 6
+
+# -----------------------------------------------------------------------------
+# Postgres endpoint (quickstart StatefulSet OR external)
+# -----------------------------------------------------------------------------
+postgresql:
+  # true  = deploy the first-party minimal quickstart StatefulSet below.
+  # false = use an external Postgres via host/port/database/username + auth.
+  enabled: true
+
+  # External connection (used when enabled=false).
+  host: ""
+  port: 5432
+  database: tai
+  username: tai
+
+  auth:
+    # Supply the password out-of-band via an existing Secret (recommended for
+    # production and for external Postgres). The Secret must have key
+    # `postgres-password`.
+    existingSecret: ""
+    existingSecretKey: postgres-password
+    # When existingSecret is empty AND the quickstart is enabled, the chart
+    # GENERATES a random password at install and keeps it across upgrades
+    # (Secret annotated helm.sh/resource-policy: keep + a lookup so upgrades do
+    # not rotate it). There is deliberately NO password field here — a working
+    # default in values.yaml would be shared by every unchanged deployment.
+    # For an EXTERNAL Postgres (enabled=false) with a PG-backed feature on,
+    # existingSecret is REQUIRED — the chart will not generate a password for a
+    # database it does not own; render fails otherwise.
+    # GitOps caveat: `helm template | kubectl apply` cannot lookup the live
+    # Secret, so a generated password is re-minted every apply — supply
+    # existingSecret for GitOps.
+
+  # Quickstart StatefulSet settings (used when enabled=true).
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  # postgres:16-alpine's own runtime uid/gid (the alpine `postgres` user). The DB
+  # pod runs under THIS uid — not the app's blanket 1000 — with fsGroup set so
+  # the fresh PVC is group-writable, and PGDATA points at a subdir of the mount
+  # (a mount root can carry lost+found and the wrong owner). This is what lets
+  # the DB come Ready under a restricted Pod-Security-Admission namespace.
+  securityContext:
+    runAsUser: 70
+    runAsGroup: 70
+    fsGroup: 70
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# Redis endpoint (quickstart StatefulSet OR external)
+# -----------------------------------------------------------------------------
+redis:
+  # true  = deploy the first-party minimal quickstart StatefulSet below.
+  # false = use an external Redis via host/port + optional auth.
+  enabled: true
+
+  # External connection (used when enabled=false).
+  host: ""
+  port: 6379
+  database: 0
+
+  auth:
+    # Redis AUTH. Off by default for the quickstart (the Redis Service is
+    # ClusterIP-only, never exposed off the pod network). No redis consumer
+    # exposes a separate password env — the password is injected into every
+    # *_REDIS_URL at container start via kubelet $(REDIS_PASSWORD) expansion, so
+    # it never appears in a rendered manifest outside the Secret.
+    #
+    # Password source (no working password default lives here):
+    #   - existingSecret set  -> that Secret (key existingSecretKey) is used;
+    #   - quickstart (enabled=true) + no existingSecret -> the chart GENERATES a
+    #     random password at install and keeps it across upgrades (Secret
+    #     annotated helm.sh/resource-policy: keep + a lookup so upgrades do not
+    #     rotate it), feeding both the Redis StatefulSet and the app env;
+    #   - external (enabled=false) + no existingSecret -> render FAILS: the chart
+    #     will not generate a password for a Redis it does not own.
+    # GitOps caveat: `helm template | kubectl apply` cannot lookup the live
+    # Secret, so a generated password is re-minted every apply — supply
+    # existingSecret for GitOps.
+    # An existingSecret password MUST be URL-safe (letters, digits, and URL
+    # unreserved chars only — no `:/?#[]@%` etc.): the consumers are URL-only,
+    # so the password is interpolated RAW into `redis://:<password>@host` URLs
+    # with no percent-encoding. Chart-generated passwords are alphanumeric and
+    # always safe.
+    enabled: false
+    existingSecret: ""
+    existingSecretKey: redis-password
+
+  # The worker-bus namespace (TAI_BUS_NAMESPACE). Pub/sub is server-global, so
+  # co-tenant stacks sharing one Redis MUST differ here to avoid cross-delivery.
+  busNamespace: tai
+
+  # Quickstart StatefulSet settings (used when enabled=true).
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  # runAsUser is redis:7-alpine's own runtime uid (the `redis` user, uid 999).
+  # The image's `redis` user has primary gid 1000, but the pod runs under an
+  # explicit gid 999 with the matching fsGroup: fsGroup makes /data group-owned
+  # by 999 and group-writable, so the process can write its data regardless of
+  # the image's own group. Same rationale as Postgres: run under the image uid
+  # with an fsGroup so /data is writable under restricted PSA.
+  securityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# -----------------------------------------------------------------------------
+# Pod / container security contexts (restricted PSA compliant)
+# -----------------------------------------------------------------------------
+# Applied to the APP pods (serve, backend, metrics sidecar, helm-test pod, the
+# schema-init hook). The quickstart DB pods use their own contexts above.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# -----------------------------------------------------------------------------
+# helm test
+# -----------------------------------------------------------------------------
+tests:
+  # The test pod curls /ready. It uses curlimages/curl (the app image has no
+  # curl) with the SAME restricted-compliant securityContext as the app, so the
+  # restricted namespace does not reject it as a false negative.
+  image:
+    repository: curlimages/curl
+    tag: "8.11.1"
+    pullPolicy: IfNotPresent

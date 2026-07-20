@@ -1,0 +1,12 @@
+# Patterns to ignore when packaging the chart.
+.DS_Store
+.git/
+.gitignore
+*.tmproj
+*.bak
+*.swp
+*.orig
+.idea/
+.vscode/
+# ci/ holds test fixtures for `helm template` / lint validation, not chart runtime.
+ci/

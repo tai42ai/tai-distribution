@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a defect in tai-distribution (container image, Compose bundle, Helm chart, release CI)
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps or commands that reproduce the problem (docker run, compose up, helm install, etc.).
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Distribution version / image tag
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: How you are running it (docker / compose / kubernetes), the platform arch, and versions (Docker, Helm, Kubernetes) as relevant.
+      placeholder: "docker.io/tai42/tai:0.1.0, linux/arm64, Docker 27, Kubernetes 1.30 via Helm 3.15"
+    validations:
+      required: true

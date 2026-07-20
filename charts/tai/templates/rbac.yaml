@@ -1,0 +1,47 @@
+{{- if eq .Values.config.mode "k8s" }}
+{{- /*
+k8s config mode: the tai42-config-k8s provider reads env from a Secret and the
+manifest from a ConfigMap via the Kubernetes API, and watches them for changes
+(multi-pod shared config). least privilege, namespace-scoped:
+  - get is resourceNames-scoped to exactly the env Secret and manifest ConfigMap;
+  - list/watch CANNOT be resourceNames-scoped (RBAC has no name selector for the
+    collection verbs), so they are necessarily namespace-wide for these two
+    resource types. That is the real blast radius: read of every Secret and
+    ConfigMap in the release namespace via list/watch.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "tai.fullname" . }}-config
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "tai.envSecretName" . | quote }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ include "tai.manifestConfigMapName" . | quote }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "tai.fullname" . }}-config
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "tai.fullname" . }}-config
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

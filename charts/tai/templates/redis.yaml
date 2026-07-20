@@ -1,0 +1,159 @@
+{{- if .Values.redis.enabled }}
+{{- /*
+First-party minimal quickstart Redis — a single-replica StatefulSet pinning
+upstream redis:7-alpine. NOT a Bitnami subchart. Runs under the redis image's own
+uid with fsGroup so /data is writable under a restricted Pod-Security-Admission
+namespace.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tai.fullname" . }}-redis
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  clusterIP: None
+  selector:
+    {{- include "tai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: {{ .Values.redis.port }}
+      targetPort: redis
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tai.fullname" . }}-redis
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: {{ include "tai.fullname" . }}-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "tai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.redis.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.redis.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.redis.securityContext.fsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.redis.securityContext.runAsUser }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          # The password is written into a private config file and handed to
+          # redis-server as `--requirepass` would be, without ever appearing in
+          # the container's argv (which any process in the pod can read from
+          # /proc). Any failure writing that file aborts the container rather
+          # than starting an unauthenticated Redis.
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              conf=/etc/redis/redis.conf
+              umask 077
+              echo "appendonly yes" > "$conf"
+              if [ -n "${REDIS_PASSWORD:-}" ]; then
+                printf 'requirepass %s\n' "$REDIS_PASSWORD" >> "$conf"
+              fi
+              exec redis-server "$conf"
+          {{- if .Values.redis.auth.enabled }}
+          env:
+            # REDISCLI_AUTH is redis-cli's own env credential, so the health
+            # probes below authenticate without an `-a` flag in their argv.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tai.redisSecretName" . }}
+                  key: {{ .Values.redis.auth.existingSecretKey | default "redis-password" }}
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tai.redisSecretName" . }}
+                  key: {{ .Values.redis.auth.existingSecretKey | default "redis-password" }}
+          {{- end }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.port }}
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli ping | grep -q PONG
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli ping | grep -q PONG
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: conf
+              mountPath: /etc/redis
+      volumes:
+        # Holds the generated redis.conf. Deliberately NOT the persistent data
+        # volume: the password must not outlive the pod on disk.
+        - name: conf
+          emptyDir: {}
+        {{- if not .Values.redis.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.redis.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "tai.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.redis.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.persistence.size }}
+  {{- end }}
+{{- end }}

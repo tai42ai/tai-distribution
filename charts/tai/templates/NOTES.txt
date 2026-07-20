@@ -1,0 +1,36 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  - serve   Deployment ({{ .Values.serve.replicaCount }} replica(s), {{ .Values.serve.workers }} worker(s)){{ if .Values.metrics.enabled }} + metrics sidecar{{ end }}
+  {{- if .Values.backend.enabled }}
+  - backend Deployment ({{ .Values.backend.type }}){{ if .Values.metrics.enabled }} + metrics sidecar{{ end }}
+  {{- end }}
+  {{- if .Values.postgresql.enabled }}
+  - postgresql StatefulSet (quickstart, {{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }})
+  {{- else }}
+  - postgresql: EXTERNAL ({{ .Values.postgresql.host }}:{{ .Values.postgresql.port }})
+  {{- end }}
+  {{- if .Values.redis.enabled }}
+  - redis StatefulSet (quickstart, {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }})
+  {{- else }}
+  - redis: EXTERNAL ({{ .Values.redis.host }}:{{ .Values.redis.port }})
+  {{- end }}
+
+Reach the server:
+{{- if .Values.ingress.enabled }}
+  http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "tai.fullname" . }}-serve 8080:{{ .Values.service.port }}
+  then GET http://localhost:8080/ready
+{{- end }}
+
+Verify the install:
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+{{- if not .Values.features.accessControl.enabled }}
+
+WARNING: access control is DISABLED (features.accessControl.enabled=false). The
+server accepts unauthenticated requests. Before exposing it, enable access
+control, name an identity provider in config.manifest lifecycle_modules, and
+public-pin /health and /ready. See the chart README.
+{{- end }}

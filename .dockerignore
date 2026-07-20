@@ -1,0 +1,9 @@
+# Mirrors .gitignore's secret set so material that cannot be committed also
+# cannot enter image layers from the main (repo-root) build context. Note the
+# `siblings` named context has NO ignore-file protection — the dev build runs
+# on a LOCAL builder only and the Dockerfile COPYs each sibling with explicit
+# --exclude patterns.
+.env
+**/.env
+compose/config/
+.git

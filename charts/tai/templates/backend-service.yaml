@@ -1,0 +1,28 @@
+{{- if and .Values.backend.enabled .Values.metrics.enabled }}
+{{- /*
+Headless Service exposing the backend pods' metrics sidecar port, so a
+ServiceMonitor (or manual scrape) can reach every backend replica. The backend
+has no HTTP surface otherwise.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tai.fullname" . }}-backend
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "tai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      # Numeric, not the named port: named ports on restartable init
+      # containers (native sidecars) don't reach EndpointSlices before
+      # Kubernetes 1.33.
+      targetPort: {{ .Values.metrics.port }}
+      protocol: TCP
+{{- end }}

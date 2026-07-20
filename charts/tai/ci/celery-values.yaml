@@ -1,0 +1,12 @@
+# ci fixture: celery mode.
+# The opt-in Celery backend: switch the backend provider to celery
+# and point it at an external broker (the chart ships no RabbitMQ — bring your
+# own). Quickstart Redis stays on for the app's other Redis-backed features and
+# the worker bus.
+
+backend:
+  enabled: true
+  type: celery
+  celery:
+    brokerUrl: "amqp://tai:REPLACE_ME@rabbitmq.example.com:5672//"
+    resultBackend: ""   # empty = derive from the chart redis endpoint

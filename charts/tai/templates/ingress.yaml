@@ -1,0 +1,35 @@
+{{- if .Values.ingress.enabled }}
+{{- /*
+Single host, single path: the Studio SPA is served same-origin as the /api
+surface, so there is nothing to split. All traffic routes to the serve Service.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "tai.fullname" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "tai.fullname" . }}-serve
+                port:
+                  name: http
+{{- end }}
