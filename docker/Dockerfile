@@ -80,7 +80,7 @@ FROM studio-${SOURCE} AS studio
 # package trees and installs from them; venv-pypi installs pinned wheels and
 # never references the siblings context (which does not exist on CI).
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS uv-base
+FROM python:3.14-slim AS uv-base
 # Pinned uv binary from the official distroless image; matches the local uv.
 COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
 ENV VIRTUAL_ENV=/opt/tai/venv \
@@ -194,7 +194,7 @@ FROM venv-${SOURCE} AS venv
 # ---------------------------------------------------------------------------
 # Final image — batteries-included, non-root, one entrypoint (`tai`).
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS final
+FROM python:3.14-slim AS final
 
 ARG VERSION
 LABEL org.opencontainers.image.title="tai" \
