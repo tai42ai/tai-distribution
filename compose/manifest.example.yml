@@ -19,25 +19,15 @@
 backend_module: !ENV ${TAI_BACKEND_MODULE:tai42_backend_arq}
 
 # --- HTTP routers -----------------------------------------------------------
-# Every HTTP route is opt-in at its module's import: without this list the
-# server exposes no /health, /ready, /api/* routes, and no Studio SPA. The
-# `plugins` router (the Studio SPA catch-all) MUST stay LAST — routes match in
-# registration order and its catch-all would shadow later siblings.
-routers_modules:
-  - tai42_skeleton.routers.health        # /health (liveness) + /ready (readiness)
-  - tai42_skeleton.routers.metrics       # in-app /metrics
-  - tai42_skeleton.routers.tools         # /api/tools*, /api/run-tool
-  - tai42_skeleton.routers.config        # /api/config*
-  - tai42_skeleton.routers.manifest      # /api/manifest*
-  - tai42_skeleton.routers.tool_runs     # /api/tool-runs* (background runs)
-  - tai42_skeleton.routers.schedules     # /api/schedules*
-  - tai42_skeleton.routers.backend       # /api/backend + /api/fleet/*
-  - tai42_skeleton.routers.api_keys      # /api/auth/* — the Studio shell reads /api/auth/me on load
-  - tai42_skeleton.routers.agents        # /api/agents* (Studio agents page)
-  - tai42_skeleton.routers.connectors    # /api/connectors* (Studio connectors page)
-  - tai42_skeleton.routers.notifications # /api/notifications* (Studio notifications page)
-  - tai42_skeleton.routers.system_kinds  # /api/system/* (Studio kind-status)
-  - tai42_skeleton.routers.plugins       # Studio SPA at / — keep LAST
+# The full core API router set + the Studio SPA catch-all are mounted by DEFAULT
+# (`default_routers: all`), so no router list is needed for a full Studio-serving
+# deployment — a hand-listed subset would leave pages like
+# marketplace/backup/presets with no routes. Set `default_routers: api` for a
+# headless JSON `/api` deployment (no SPA), or `none` to mount nothing by default
+# and list every router yourself. Add extras/plugins under `routers_modules:` —
+# the loader keeps the SPA catch-all last and mounts each core router once (no
+# double-mount).
+default_routers: all
 
 # --- Identity provider (needed when ACCESS_CONTROL_ENABLE=true) --------------
 # The skeleton ships no concrete identity provider; a deployment with the auth

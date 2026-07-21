@@ -291,26 +291,18 @@ config:
   # The backend_module line is managed by the chart from `backend.type`; do not
   # set backend_module here.
   #
-  # routers_modules: every HTTP route is opt-in at its module's import — without
-  # a module here its routes do not exist. `health` registers `/health` and
-  # `/ready`, the exact paths the serve Deployment's startup/liveness/readiness
-  # probes and the `helm test` pod hit; drop it only if you replace those probe
-  # paths too. The `plugins` router (the Studio SPA catch-all at /) MUST stay
-  # LAST — routes match in registration order and its catch-all would shadow
-  # later siblings.
+  # default_routers: the built-in router set the server mounts. `all` (the
+  # default) mounts every core API router PLUS the Studio SPA catch-all last —
+  # including `health` (`/health` + `/ready`, the exact paths the serve
+  # Deployment's startup/liveness/readiness probes and the `helm test` pod hit).
+  # Set `api` for a headless JSON `/api` deployment (no SPA), or `none` to mount
+  # nothing by default and list every router under `routers_modules`. Add
+  # extras/plugins under `routers_modules`; the loader keeps the SPA catch-all
+  # last and mounts each core router once (no double-mount).
   manifest: |
     # tai manifest — see https://tai42.ai/concepts/manifest
     lifecycle_modules: []
-    routers_modules:
-      - tai42_skeleton.routers.health        # /health (liveness) + /ready (readiness)
-      - tai42_skeleton.routers.metrics       # in-app /metrics
-      - tai42_skeleton.routers.tools         # /api/tools*, /api/run-tool
-      - tai42_skeleton.routers.config        # /api/config*
-      - tai42_skeleton.routers.manifest      # /api/manifest*
-      - tai42_skeleton.routers.tool_runs     # /api/tool-runs* (background runs)
-      - tai42_skeleton.routers.schedules     # /api/schedules*
-      - tai42_skeleton.routers.backend       # /api/backend + /api/fleet/*
-      - tai42_skeleton.routers.plugins       # Studio SPA at / — keep LAST
+    default_routers: all
     tools: []
     agents: []
     mcp: []
