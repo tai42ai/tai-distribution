@@ -65,6 +65,24 @@ docker buildx build -f docker/Dockerfile \
   --load -t docker.io/tai42/tai:latest .
 ```
 
+To build and run the whole stack from source, layer the
+`docker-compose.local.yml` override on the base compose — it adds the same
+`SOURCE=local` build to every app service, so `up --build` builds the image from
+your sibling checkouts and starts the stack against it. It takes the same
+`.env` + `config/` the quickstart below needs:
+
+```sh
+cd compose
+cp .env.example .env                 # fill POSTGRES_PASSWORD etc.
+mkdir -p config && cp manifest.example.yml config/manifest.yml && touch config/.env
+TAI_VERSION=local docker compose \
+  -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
+
+The `siblings` build context defaults to the parent of the checkouts (`../..`);
+override it with `TAI_SIBLINGS`. Because that context may hold untracked
+secrets, run this on a LOCAL builder only — never CI or a shared registry.
+
 ## Repository layout
 
 ```
