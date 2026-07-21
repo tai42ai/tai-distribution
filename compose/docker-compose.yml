@@ -63,6 +63,14 @@ x-tai-app-env: &tai-app-env
   # identity provider lifecycle module in the manifest and public-pinned probe
   # routes, or boot refuses loudly. See the access-control guide before enabling.
   ACCESS_CONTROL_ENABLE: "${ACCESS_CONTROL_ENABLE:-true}"
+  # Public-regardless-of-table path prefixes. This env REPLACES the app's code
+  # default ("/api/login") wholesale, so the default here re-includes /api/login
+  # (the login screen's public methods endpoint) AND the built Studio SPA's
+  # static surface — the shell at "/", its hashed /assets and importmap /vendor
+  # bundles, and the favicon — so a served-Studio deployment with access control
+  # ON can load its login page. Everything under /api/* except /api/login stays
+  # authed. Override for a headless (no-Studio) deployment.
+  ACCESS_CONTROL_ALWAYS_PUBLIC_PATH_PREFIXES: '${ACCESS_CONTROL_ALWAYS_PUBLIC_PATH_PREFIXES:-["/api/login", "/assets", "/vendor", "/favicon.ico", "/"]}'
 
   # --- worker bus + MCP session store (BOTH mandatory) ------------------------
   # Multi-worker serve refuses to boot without the bus (siblings would serve

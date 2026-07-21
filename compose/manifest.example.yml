@@ -32,6 +32,11 @@ routers_modules:
   - tai42_skeleton.routers.tool_runs     # /api/tool-runs* (background runs)
   - tai42_skeleton.routers.schedules     # /api/schedules*
   - tai42_skeleton.routers.backend       # /api/backend + /api/fleet/*
+  - tai42_skeleton.routers.api_keys      # /api/auth/* — the Studio shell reads /api/auth/me on load
+  - tai42_skeleton.routers.agents        # /api/agents* (Studio agents page)
+  - tai42_skeleton.routers.connectors    # /api/connectors* (Studio connectors page)
+  - tai42_skeleton.routers.notifications # /api/notifications* (Studio notifications page)
+  - tai42_skeleton.routers.system_kinds  # /api/system/* (Studio kind-status)
   - tai42_skeleton.routers.plugins       # Studio SPA at / — keep LAST
 
 # --- Identity provider (needed when ACCESS_CONTROL_ENABLE=true) --------------
