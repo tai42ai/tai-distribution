@@ -1,0 +1,16 @@
+{{- if not .Values.config.existingConfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tai.manifestConfigMapName" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+data:
+  manifest.yml: |
+    {{- .Values.config.manifest | nindent 4 }}
+    {{/* backend_module is managed by the chart from backend.type so it never
+         drifts from the injected provider connection env. */}}
+    {{- if .Values.backend.enabled }}
+    backend_module: {{ include "tai.backendModule" . }}
+    {{- end }}
+{{- end }}

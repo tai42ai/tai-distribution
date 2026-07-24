@@ -1,0 +1,43 @@
+# Source-build override for the core TAI image.
+#
+# Builds the image from local sibling checkouts (SOURCE=local) instead of
+# pulling the released image, so a contributor can run the full stack against
+# uncommitted local changes. Every app process (db-init / serve / backend /
+# metrics) shares one build definition, so they can never build from different
+# source.
+#
+# Requires every `tai-*` repo cloned beside `tai-distribution`; the parent of
+# those checkouts is the `siblings` build context (override with TAI_SIBLINGS).
+# That context may hold untracked secrets, so this override is for a LOCAL
+# builder ONLY — never CI or a shared registry.
+#
+# Usage (from compose/), pinning TAI_VERSION so the built image is never
+# confused with a pulled release:
+#
+#     TAI_VERSION=local docker compose \
+#       -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# Set TAI_VERSION=local in .env to make the `up`/`down`/`logs` commands short.
+
+name: tai
+
+# One build definition shared by every app service (matches the *tai-image
+# anchor those services already resolve, so the built tag and the referenced tag
+# are the same image).
+x-tai-build: &tai-build
+  context: ..
+  dockerfile: docker/Dockerfile
+  additional_contexts:
+    siblings: ${TAI_SIBLINGS:-../..}
+  args:
+    SOURCE: local
+
+services:
+  db-init:
+    build: *tai-build
+  serve:
+    build: *tai-build
+  backend:
+    build: *tai-build
+  metrics:
+    build: *tai-build

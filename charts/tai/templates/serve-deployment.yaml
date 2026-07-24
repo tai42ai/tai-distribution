@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tai.fullname" . }}-serve
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: serve
+spec:
+  {{- if not .Values.serve.autoscaling.enabled }}
+  replicas: {{ .Values.serve.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: serve
+  template:
+    metadata:
+      labels:
+        {{- include "tai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: serve
+        {{- with .Values.serve.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- /* Covers BOTH rendered config objects (manifest ConfigMap + env
+               Secret) so an env-only or manifest-only change rolls the pods. */}}
+        checksum/config: {{ print (include (print $.Template.BasePath "/configmap-manifest.yaml") .) (include (print $.Template.BasePath "/secret-env.yaml") .) | sha256sum }}
+        {{- with .Values.serve.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        {{- include "tai.podVolumes" . | nindent 8 }}
+        {{- with .Values.serve.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if .Values.metrics.enabled }}
+      initContainers:
+        {{- include "tai.metricsSidecar" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: serve
+          image: {{ include "tai.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - serve
+            - --transport
+            - {{ .Values.serve.transport | quote }}
+            - --host
+            - {{ .Values.serve.host | quote }}
+            - --port
+            - {{ .Values.serve.port | quote }}
+            - --workers
+            - {{ .Values.serve.workers | quote }}
+            {{- if .Values.serve.statelessHttp }}
+            - --stateless-http
+            {{- end }}
+            {{- if eq .Values.config.mode "file" }}
+            - --manifest-path
+            - /app/manifest.yml
+            {{- end }}
+            {{- with .Values.serve.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.serve.port }}
+              protocol: TCP
+          env:
+            {{- include "tai.commonEnv" . | nindent 12 }}
+            {{- include "tai.subMcpEnv" . | nindent 12 }}
+            {{- include "tai.backendEnv" . | nindent 12 }}
+            {{- include "tai.multiprocEnv" . | nindent 12 }}
+          {{- if .Values.serve.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: {{ .Values.serve.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.serve.startupProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.serve.startupProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.serve.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.serve.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.serve.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.serve.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.serve.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.serve.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: {{ .Values.serve.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.serve.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.serve.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.serve.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.serve.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "tai.containerVolumeMounts" . | nindent 12 }}
+            {{- with .Values.serve.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      {{- with .Values.serve.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.serve.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.serve.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

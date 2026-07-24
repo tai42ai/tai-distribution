@@ -1,0 +1,51 @@
+#| validate: manifest
+# Minimal working TAI manifest for the compose bundle.
+#
+#   cp manifest.example.yml config/manifest.yml
+#
+# It is bind-mounted at /app/manifest.yml (the file config provider's input) and
+# every section is optional — an empty manifest ({}) boots a bare MCP server.
+
+# --- Task backend -----------------------------------------------------------
+# Selected by the TAI_BACKEND_MODULE env var through pyaml_env's !ENV expansion.
+# The default separator is a SINGLE colon (pyaml_env default_sep=':'), so the
+# form is ${VAR:default}, NOT the shell ${VAR:-default}: with unset
+# TAI_BACKEND_MODULE this resolves to `tai42_backend_arq` (the compose serve/
+# backend env also presets that default). Set TAI_BACKEND_MODULE=tai42_backend_celery
+# in .env (with `--profile celery`) to switch the leg to celery + RabbitMQ.
+#
+# A registered backend REQUIRES the worker bus — the compose presets
+# TAI_BUS_REDIS_URL on serve and backend, so the boot rules are satisfied.
+backend_module: !ENV ${TAI_BACKEND_MODULE:tai42_backend_arq}
+
+# --- HTTP routers -----------------------------------------------------------
+# The full core API router set + the Studio SPA catch-all are mounted by DEFAULT
+# (`default_routers: all`), so no router list is needed for a full Studio-serving
+# deployment — a hand-listed subset would leave pages like
+# marketplace/backup/presets with no routes. Set `default_routers: api` for a
+# headless JSON `/api` deployment (no SPA), or `none` to mount nothing by default
+# and list every router yourself. Add extras/plugins under `routers_modules:` —
+# the loader keeps the SPA catch-all last and mounts each core router once (no
+# double-mount).
+default_routers: all
+
+# --- Identity provider (needed when ACCESS_CONTROL_ENABLE=true) --------------
+# The skeleton ships no concrete identity provider; a deployment with the auth
+# gate on MUST name one. The default redis-backed api-key provider registers
+# itself as the "redis" provider at import. With the example .env's
+# ACCESS_CONTROL_ENABLE=false this stays off; uncomment when you enable the gate.
+# lifecycle_modules:
+#   - tai42_identity_redis.redis_api_key_provider
+
+# --- Tools ------------------------------------------------------------------
+# One toolbox tool, branched onto the task backend so a backend round-trip is
+# exercisable out of the box: `sync_task` branches `current_time_info` into
+# `current_time_info_sync_task`, which queues the tool on the worker (arq/celery)
+# and waits for its result. The `sync_task` extension is registered by importing
+# `backend_module` above, so no `extensions_modules` entry is needed.
+tools:
+  - title: toolbox-time
+    module: tai42_toolbox.tools.current_time_info
+    include: [current_time_info]
+    extensions:
+      current_time_info: [[sync_task]]
