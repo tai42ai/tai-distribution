@@ -87,10 +87,26 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: docker compose config (all files + profiles)
-        # POSTGRES_PASSWORD has no default (${POSTGRES_PASSWORD:?...}), so `config`
-        # interpolation needs it set; validation never connects, so a dummy suffices.
+        # Every ${VAR:?...} (no default) across the core AND langfuse compose files must
+        # be set for `config` to interpolate; validation never connects to anything, so
+        # dummy values suffice. Keep this list in sync with the compose files' required
+        # vars — a new required var here is a new red until it is added.
         env:
           POSTGRES_PASSWORD: ci-validate-only
+          LANGFUSE_CLICKHOUSE_PASSWORD: ci-validate-only
+          LANGFUSE_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+          LANGFUSE_INIT_ORG_ID: ci-org
+          LANGFUSE_INIT_PROJECT_ID: ci-project
+          LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ci-public
+          LANGFUSE_INIT_PROJECT_SECRET_KEY: ci-secret
+          LANGFUSE_INIT_USER_EMAIL: ci@example.com
+          LANGFUSE_INIT_USER_PASSWORD: ci-validate-only
+          LANGFUSE_MINIO_ROOT_PASSWORD: ci-validate-only
+          LANGFUSE_MINIO_ROOT_USER: ci-user
+          LANGFUSE_NEXTAUTH_SECRET: ci-validate-only
+          LANGFUSE_POSTGRES_PASSWORD: ci-validate-only
+          LANGFUSE_REDIS_PASSWORD: ci-validate-only
+          LANGFUSE_SALT: ci-validate-only
         run: |
           set -euo pipefail
           shopt -s nullglob globstar
