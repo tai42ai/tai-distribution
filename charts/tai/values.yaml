@@ -336,8 +336,8 @@ config:
 features:
   # Access control (authn/authz). OFF by default so the quickstart boots with no
   # identity provider or key seeding. Turning it on requires naming an identity
-  # provider in the manifest lifecycle_modules and public-pinning /health and
-  # /ready — see the chart README before enabling in production.
+  # provider in the manifest lifecycle_modules — the /health and /ready probes are
+  # served public by default (no pin) — see the chart README before enabling in production.
   accessControl:
     enabled: false
   # Presets + policy history (Postgres-backed).

@@ -95,10 +95,10 @@ readable set is limited to Secrets you already trust the app with.
 ### Access control is OFF by default
 
 `features.accessControl.enabled=false` so the quickstart boots with no identity
-provider or key seeding. **Before exposing the server**, enable access control,
+provider or key seeding. **Before exposing the server**, enable access control and
 name an identity provider (e.g. `tai42_identity_redis.redis_api_key_provider`) in
-`config.manifest` `lifecycle_modules`, and public-pin `/health` and `/ready`.
-See the [deploy guide](https://tai42.ai/guides/deploy).
+`config.manifest` `lifecycle_modules`. The `/health` and `/ready` probes are served
+public by default (no pin needed). See the [deploy guide](https://tai42.ai/guides/deploy).
 
 ## Configuration
 

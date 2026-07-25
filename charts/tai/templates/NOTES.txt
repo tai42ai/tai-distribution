@@ -31,6 +31,6 @@ Verify the install:
 
 WARNING: access control is DISABLED (features.accessControl.enabled=false). The
 server accepts unauthenticated requests. Before exposing it, enable access
-control, name an identity provider in config.manifest lifecycle_modules, and
-public-pin /health and /ready. See the chart README.
+control and name an identity provider in config.manifest lifecycle_modules. The
+/health and /ready probes are served public by default. See the chart README.
 {{- end }}
