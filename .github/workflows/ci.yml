@@ -20,12 +20,13 @@ env:
 
 jobs:
   # Dockerfile lint. The Dockerfile uses the docker/dockerfile:1.7-labs frontend
-  # (COPY --exclude); hadolint parses the instructions statically.
+  # (COPY --exclude); hadolint must be new enough to parse that flag — v3.1.0's
+  # hadolint (2.12.0) rejects it as an invalid flag, v3.3.0's (2.13.x) parses it.
   hadolint:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+      - uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: docker/Dockerfile
 
@@ -86,6 +87,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: docker compose config (all files + profiles)
+        # POSTGRES_PASSWORD has no default (${POSTGRES_PASSWORD:?...}), so `config`
+        # interpolation needs it set; validation never connects, so a dummy suffices.
+        env:
+          POSTGRES_PASSWORD: ci-validate-only
         run: |
           set -euo pipefail
           shopt -s nullglob globstar
