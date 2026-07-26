@@ -123,6 +123,7 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-channel-slack/          /src/tai-channel-slack/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-channel-telegram/       /src/tai-channel-telegram/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-channel-twilio/         /src/tai-channel-twilio/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-channel-whatsapp/       /src/tai-channel-whatsapp/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-monitoring-langfuse/    /src/tai-monitoring-langfuse/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-accounts-oidc/       /src/tai-accounts-oidc/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-accounts-postgres/       /src/tai-accounts-postgres/
@@ -149,6 +150,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/tai-channel-slack \
       /src/tai-channel-telegram \
       /src/tai-channel-twilio \
+      /src/tai-channel-whatsapp \
       /src/tai-monitoring-langfuse \
       /src/tai-accounts-oidc \
       /src/tai-accounts-postgres \
@@ -184,6 +186,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       tai42-channel-slack==${VERSION} \
       tai42-channel-telegram==${VERSION} \
       tai42-channel-twilio==${VERSION} \
+      tai42-channel-whatsapp==${VERSION} \
       tai42-monitoring-langfuse==${VERSION} \
       tai42-accounts-oidc==${VERSION} \
       tai42-accounts-postgres==${VERSION} \
