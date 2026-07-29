@@ -1,0 +1,27 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One release run at a time; never cancel an in-flight release PR update.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release PR branch; create the tag + GitHub Release
+      pull-requests: write # open and update the release PR
+    steps:
+      # The PAT (not GITHUB_TOKEN) is required so the release PR triggers CI and
+      # the tag it creates on merge triggers release.yml — refs written by
+      # GITHUB_TOKEN do not fire workflows.
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
