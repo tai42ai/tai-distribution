@@ -1,0 +1,33 @@
+# First-party package set installed into the release image (SOURCE=pypi).
+#
+# Every package carries its OWN version. Packages are released independently,
+# so a single shared version is not expressible: a fix to one plugin bumps that
+# plugin alone, and forcing the rest to match would mean either empty releases
+# or an image that cannot be built until the numbers happen to align.
+#
+# This file IS the image's manifest of contents. Update it as part of a release:
+# set each line to the version that release ships, then build. The image's own
+# tag (the VERSION build-arg) names the IMAGE, never its contents.
+#
+# Pins are exact (==) and wheels-only (--only-binary=:all: at the install site),
+# with a named carve-out at that site for the three transitive dependencies that
+# publish no wheel at all: the slim final image has no compiler, so any OTHER
+# package missing a wheel must fail the build loudly rather than fall back to a
+# source build.
+#
+# The minimal core: the platform packages plus one reference provider per
+# infrastructure kind (local storage, arq backend, redis identity, k8s config).
+# Every other channel, storage, backend, connector, verifier, and tool is
+# installed at runtime via the marketplace or baked into a derived image, and is
+# deliberately NOT listed here. This set MUST stay identical to the venv-local
+# install set in docker/Dockerfile — the image ships one roster regardless of
+# SOURCE.
+tai42-contract==0.2.0
+tai42-kit==0.2.0
+tai42-toolbox==0.2.0
+tai42-skeleton[toolbox,files]==0.2.0
+tai42-agents==0.2.0
+tai42-storage-local==0.2.0
+tai42-backend-arq==0.2.0
+tai42-identity-redis==0.2.0
+tai42-config-k8s==0.2.0

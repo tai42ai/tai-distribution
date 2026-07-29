@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "tai.fullname" . }}-test-ready
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    {{- /* Delete only `before-hook-creation`, NOT `hook-succeeded`: the pod must
+           SURVIVE a passing run so `helm test --logs` (used by
+           charts/test/kind-install.sh and CI) can read its output. With
+           `hook-succeeded` Helm deletes the pod the instant it passes, then
+           `--logs` errors `pods "tai-test-ready" not found` and the harness
+           exits non-zero on a PASSING test. The surviving pod is reaped by
+           `before-hook-creation` at the start of the next `helm test` run. */}}
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- /* The SAME restricted-compliant securityContext as the app pods — an
+         unadorned test pod is rejected by the restricted namespace and reads as
+         a false negative. */}}
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: test-ready
+      {{- /* curlimages/curl, NOT the app image: python:3.13-slim ships no curl. */}}
+      image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+      imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      command:
+        - curl
+        - -fsS
+        - --max-time
+        - "10"
+        - --retry
+        - "30"
+        - --retry-connrefused
+        - --retry-delay
+        - "5"
+        - {{ printf "http://%s-serve:%v/ready" (include "tai.fullname" .) .Values.service.port | quote }}

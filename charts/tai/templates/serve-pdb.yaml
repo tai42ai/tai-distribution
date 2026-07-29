@@ -1,0 +1,27 @@
+{{- if .Values.serve.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tai.fullname" . }}-serve
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: serve
+spec:
+  {{- /*
+  Selected on presence, not truth: minAvailable: 0 is a legitimate setting but
+  is falsy in templates, and a truth test would silently drop it and render a
+  PDB carrying neither field. A null value counts as absent, and having neither
+  field is rejected outright rather than rendered as an invalid PDB.
+  */}}
+  {{- if and (hasKey .Values.serve.pdb "minAvailable") (ne .Values.serve.pdb.minAvailable nil) }}
+  minAvailable: {{ .Values.serve.pdb.minAvailable }}
+  {{- else if and (hasKey .Values.serve.pdb "maxUnavailable") (ne .Values.serve.pdb.maxUnavailable nil) }}
+  maxUnavailable: {{ .Values.serve.pdb.maxUnavailable }}
+  {{- else }}
+  {{- fail "serve.pdb.enabled=true requires either serve.pdb.minAvailable or serve.pdb.maxUnavailable" }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: serve
+{{- end }}

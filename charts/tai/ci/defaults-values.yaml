@@ -1,0 +1,8 @@
+# ci fixture: defaults.
+# The out-of-the-box quickstart — first-party Postgres + Redis StatefulSets,
+# arq backend, metrics sidecars, file config mode. This is the shape the kind
+# install test exercises.
+#
+# (Empty overrides on purpose: this pins the default render as a regression
+# guard.)
+{}

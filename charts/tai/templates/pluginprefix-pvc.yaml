@@ -1,0 +1,25 @@
+{{- if and .Values.pluginPrefix.enabled (not .Values.pluginPrefix.existingClaim) }}
+{{- /*
+Persistent plugin prefix (TAI_PLUGINS_PREFIX) — a plain PVC, not a StatefulSet
+volumeClaimTemplate, so it can be ReadWriteMany and mounted by BOTH the serve and
+backend pods at once. RWX is the default because serve and backend are separate
+pods; RWO works only when one node holds every mounting pod (backend disabled, or
+serve and backend co-scheduled) — one replica each is still two pods.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tai.pluginPrefixClaimName" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: plugin-prefix
+spec:
+  accessModes:
+    - {{ .Values.pluginPrefix.accessMode }}
+  {{- with .Values.pluginPrefix.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.pluginPrefix.size }}
+{{- end }}

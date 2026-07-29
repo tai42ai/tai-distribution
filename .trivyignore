@@ -1,0 +1,2 @@
+# Justified CVE suppressions only — one per line with a comment explaining
+# why the CVE is unfixable/not-applicable. Empty = nothing suppressed.

@@ -1,0 +1,287 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Minimal by default; each job elevates only what it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Per-arch build on native runners (NOT QEMU). Each leg builds SOURCE=pypi,
+  # scans the built image, and — only if the scan passes — pushes it to GHCR BY
+  # DIGEST (no tag). The merge job assembles the multi-arch manifest lists from
+  # these digests. A bare matrix push to a shared tag would overwrite the tag
+  # with a single-arch image, hence split-and-merge.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # push per-arch digests to GHCR
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Read STUDIO_REF
+        id: studio
+        run: echo "ref=$(cat docker/STUDIO_REF)" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Build to the local daemon first so trivy can scan the exact bits BEFORE
+      # any push. The gha cache makes the subsequent push build near-free.
+      - name: Build for scan (load)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: tai-scan:${{ matrix.arch }}
+          build-args: |
+            SOURCE=pypi
+            VERSION=${{ steps.ver.outputs.version }}
+            STUDIO_REF=${{ steps.studio.outputs.ref }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      # Gate: fail on FIXABLE critical/high (--ignore-unfixed). Trivy auto-reads
+      # the checked-in .trivyignore from the repo root.
+      - name: Trivy scan (gate before push)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: tai-scan:${{ matrix.arch }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+      - name: Build and push by digest to GHCR
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            SOURCE=pypi
+            VERSION=${{ steps.ver.outputs.version }}
+            STUDIO_REF=${{ steps.studio.outputs.ref }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          sbom: true
+          provenance: true
+          outputs: type=image,name=ghcr.io/tai42ai/tai,push-by-digest=true,name-canonical=true,push=true
+      # Step outputs reach the shell through env, never by expression
+      # interpolation into the script text.
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # Assemble one multi-arch manifest list per semver tag on BOTH registries from
+  # the per-arch GHCR digests, then cosign-keyless-sign the manifest-list digest
+  # in each registry (signatures live in the registry of the signed reference —
+  # signing docker.io alone would leave the ghcr mirror unsigned).
+  merge:
+    needs: build
+    runs-on: ubuntu-24.04
+    outputs:
+      # Stable-vs-prerelease verdict from the semver fan-out below, reused by the
+      # chart job so the GitHub Release matches how the image tags were claimed.
+      prerelease: ${{ steps.manifest.outputs.prerelease }}
+    permissions:
+      contents: read
+      packages: write # push manifest lists + signatures to GHCR
+      id-token: write # cosign keyless OIDC
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Log in to Docker Hub
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Create and push manifest lists on both registries
+        id: manifest
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Semver fan-out: X.Y.Z / X.Y / X / latest — the moving suffixes are
+          # claimed by stable releases only. A prerelease (1.2.0rc1, 1.2.0-rc1)
+          # publishes its exact version tag and leaves X.Y / X / latest pointing
+          # at the last stable image. The same stable/prerelease verdict is
+          # exported so the GitHub Release is flagged consistently with the tags.
+          SUFFIXES=("${VERSION}")
+          if [[ "${VERSION}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            SUFFIXES+=("${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}" "latest")
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::prerelease ${VERSION}: publishing the version tag only"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Per-arch source manifests, pushed by the build matrix to GHCR.
+          SRC=()
+          for d in /tmp/digests/*; do
+            SRC+=("ghcr.io/tai42ai/tai@sha256:$(basename "${d}")")
+          done
+          if [[ ${#SRC[@]} -eq 0 ]]; then
+            echo "ERROR: no per-arch digests found" >&2
+            exit 1
+          fi
+          for REG in docker.io/tai42/tai ghcr.io/tai42ai/tai; do
+            TAGS=()
+            for s in "${SUFFIXES[@]}"; do TAGS+=(-t "${REG}:${s}"); done
+            echo "==> imagetools create ${REG} (${SUFFIXES[*]})"
+            docker buildx imagetools create "${TAGS[@]}" "${SRC[@]}"
+          done
+          # Resolve the manifest-list digest in each registry for signing.
+          DH_DIGEST="$(docker buildx imagetools inspect "docker.io/tai42/tai:${VERSION}" --format '{{ .Manifest.Digest }}')"
+          GHCR_DIGEST="$(docker buildx imagetools inspect "ghcr.io/tai42ai/tai:${VERSION}" --format '{{ .Manifest.Digest }}')"
+          echo "dh_digest=${DH_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "ghcr_digest=${GHCR_DIGEST}" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+      - name: Cosign sign manifest lists (keyless) in both registries
+        env:
+          DH_DIGEST: ${{ steps.manifest.outputs.dh_digest }}
+          GHCR_DIGEST: ${{ steps.manifest.outputs.ghcr_digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "docker.io/tai42/tai@${DH_DIGEST}"
+          cosign sign --yes "ghcr.io/tai42ai/tai@${GHCR_DIGEST}"
+
+  # Whether the Helm chart has landed (gates the chart jobs). The chart
+  # job is gated on this so an early tag still publishes the image.
+  detect-chart:
+    runs-on: ubuntu-24.04
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - id: check
+        run: |
+          if [[ -f charts/tai/Chart.yaml ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::charts/tai not present; skipping chart publish + GitHub Release"
+          fi
+
+  # Package + push the chart to GHCR (OCI), cosign-sign it, then cut the GitHub
+  # Release with generated notes and the image SBOM attached.
+  chart:
+    needs: [merge, detect-chart]
+    if: needs.detect-chart.outputs.present == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the chart + its signature to GHCR
+      id-token: write # cosign keyless OIDC
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+      - uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+      # Docker-config GHCR login so cosign (chart signature push) and trivy (SBOM
+      # image pull) both find credentials — `helm registry login` writes only
+      # helm's own config, which neither reads.
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Package, push, and sign the chart
+        env:
+          # Read from the environment and piped in, so the token never appears
+          # in a command line the runner's process list would expose.
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | helm registry login ghcr.io \
+            --username "${GHCR_USER}" \
+            --password-stdin
+          mkdir -p /tmp/chart
+          # Stamp both from the release tag. The chart and the image it targets
+          # are cut from the same tag in this repository, so the tag is the
+          # chart's version and the app version it ships against; without these
+          # every release would republish Chart.yaml's placeholder and overwrite
+          # the previously published chart.
+          helm package charts/tai \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            --destination /tmp/chart
+          pkg="$(ls /tmp/chart/tai-*.tgz)"
+          push_out="$(helm push "${pkg}" oci://ghcr.io/tai42ai/charts 2>&1)"
+          echo "${push_out}"
+          digest="$(echo "${push_out}" | awk '/[Dd]igest:/ {print $NF}')"
+          if [[ -z "${digest}" ]]; then
+            echo "ERROR: could not parse chart digest from helm push output" >&2
+            exit 1
+          fi
+          cosign sign --yes "ghcr.io/tai42ai/charts/tai@${digest}"
+      # Generate a CycloneDX SBOM of the released multi-arch image to attach to
+      # the GitHub Release (in-registry buildx attestations also exist).
+      - name: Generate image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/tai42ai/tai:${{ steps.ver.outputs.version }}
+          format: cyclonedx
+          output: sbom.cdx.json
+      # Marked prerelease on the same verdict that withheld the moving image
+      # tags, so a prerelease is never presented as the latest release.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        with:
+          generate_release_notes: true
+          prerelease: ${{ needs.merge.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.merge.outputs.prerelease != 'true' }}
+          files: sbom.cdx.json
