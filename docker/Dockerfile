@@ -8,9 +8,10 @@
 #            a LOCAL builder only: the `siblings` named build context is the
 #            parent directory of every checkout and carries untracked secrets.
 #   pypi   — release build (studio built from tai42ai/tai-studio at STUDIO_REF;
-#            tai42-* installed from PyPI at pinned ==${VERSION}, binary wheels only).
+#            tai42-* installed from PyPI at the exact pins in
+#            docker/pypi-requirements.txt, binary wheels only).
 ARG SOURCE=pypi
-ARG VERSION=0.2.0
+ARG VERSION=0.2.1
 ARG STUDIO_REF
 
 # ---------------------------------------------------------------------------

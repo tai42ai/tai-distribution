@@ -25,7 +25,7 @@
 tai42-contract==0.2.0
 tai42-kit==0.2.0
 tai42-toolbox==0.2.0
-tai42-skeleton[toolbox,files]==0.2.0
+tai42-skeleton[toolbox,files]==0.2.1
 tai42-agents==0.2.0
 tai42-storage-local==0.2.0
 tai42-backend-arq==0.2.0
