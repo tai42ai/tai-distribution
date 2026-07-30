@@ -4,22 +4,29 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # CI-only; not part of the shipped image, so no release.
     commit-message:
       prefix: chore
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: /docker
     schedule:
       interval: weekly
-    # A base-image bump changes the shipped image, so it patches the release.
     commit-message:
       prefix: fix
-  # New PyPI versions of the first-party packages arrive as PRs; build-smoke CI
-  # validates them, and the `fix` prefix lets release-please drive the image +
-  # chart release on merge.
+    groups:
+      docker:
+        patterns:
+          - "*"
   - package-ecosystem: pip
     directory: /docker
     schedule:
       interval: daily
     commit-message:
       prefix: fix
+    groups:
+      first-party:
+        patterns:
+          - "tai42-*"
