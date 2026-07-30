@@ -58,7 +58,13 @@ ways:
 a running server through the marketplace API/Studio — no rebuild. A
 marketplace install `pip install`s the package into the server's environment and
 patches the manifest in place, so the plugin is live on the next config reload
-with no restart. For those installs to **survive a container recreation**, set
+with no restart — including a first-ever install (the plugin prefix is on
+`sys.path` from boot even while empty, and each reload invalidates the import
+caches). The exception is **router** and **middleware** plugins: their handlers
+and middleware stack are frozen into the ASGI app when the process builds, so a
+router or middleware plugin — net-new or an upgrade of an already-listed one —
+takes effect only on the next process restart. For those installs to **survive a
+container recreation**, set
 `TAI_PLUGINS_PREFIX` to a mounted, persistent directory (see
 [Persistence](#persistence)); without it, a marketplace install lands in the
 image's ephemeral venv and is lost when the container is replaced.
@@ -93,6 +99,55 @@ by env vars the skeleton reads:
 The two work together: the prefix keeps the installed **code**, the manifest
 keeps its **registration**. Persist only one and a recreated container boots
 with the halves out of sync.
+
+## Upgrading
+
+Moving a deployment to a new release is three steps: pull the new image tag,
+start it, then bring the marketplace-installed plugins up to it. Compose shown;
+the same three steps apply to any runner:
+
+```sh
+cd compose
+# 1. Pull the new tag and recreate the containers.
+TAI_VERSION=X.Y.Z docker compose pull
+TAI_VERSION=X.Y.Z docker compose up -d
+
+# 2. Move every marketplace-installed plugin to its newest compatible version.
+docker compose exec serve tai plugins upgrade --all
+
+# 3. Verify: every row's compat verdict, and anything still quarantined.
+docker compose exec serve tai plugins installed
+```
+
+**Why the plugins survive the image swap.** A new tag replaces the container
+and, with it, the image's baked-in venv — but `TAI_PLUGINS_PREFIX` points at a
+mounted persistent directory outside the image, and the manifest holding each
+plugin's registration is likewise mounted (see [Persistence](#persistence)).
+Both halves of every marketplace install therefore carry over unchanged into
+the new container; only a plugin installed without the prefix (into the
+ephemeral venv) is lost with the old container.
+
+**Why step 2 exists.** What carries over was installed against the OLD
+release's core, and the new release may ship a newer `tai42-contract`. A
+carried-over plugin whose declared contract range excludes the running contract
+cannot be loaded — and boot does not crash on it: the server **quarantines**
+it, starting up without it, serving everything else, and naming the plugin and
+the reason loudly in the startup log and in the installed listing.
+`tai plugins upgrade --all` then moves every installed plugin onto its newest
+version compatible with the running core, re-patching the manifest and
+reloading as it goes, and reports one outcome per plugin (`upgraded` /
+`up-to-date` / `no-compatible-version` / `failed`). Each such reload is
+broadcast fleet-wide on the worker bus, so every running container re-imports
+the upgraded plugins in place — no restart is needed, and this holds for the
+very first install too: the prefix site dirs are appended to `sys.path` on every
+boot even while empty, and each in-place reload invalidates the import caches, so
+a freshly installed or upgraded plugin propagates live to running peers. The one
+exception is **router** and **middleware** plugins: their handlers and middleware
+stack are frozen into the ASGI app when the process builds, so a router or
+middleware plugin — net-new or an upgrade of an already-listed one — takes effect
+only when each pod/container restarts. Step 3's
+`tai plugins installed` confirms the result: each row's compat verdict, update
+availability, and any plugin still quarantined.
 
 ## Building locally
 

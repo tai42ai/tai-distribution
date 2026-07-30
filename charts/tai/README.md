@@ -137,9 +137,64 @@ in. Add the ones a deployment needs one of two ways:
 (serve + backend are separate Deployments — two pods even at one replica each), so
 the default is **ReadWriteMany**; `ReadWriteOnce` is safe only when a single node
 holds every mounting pod (backend disabled, or serve and backend co-scheduled).
-A restarted or freshly scaled pod picks the shared prefix up at boot; live
-cross-pod pickup with NO restart — one pod installs, running peers see it — is
-**future work**.
+Cross-pod pickup needs no restart: every marketplace install/update ends in a
+fleet-wide reload broadcast on the worker bus, so running peers re-import the
+changed plugins in place — a first-ever install included (the prefix site dirs
+are on each pod's `sys.path` from boot even while empty, and every reload
+invalidates the import caches). The one exception is **router** and **middleware**
+plugins: their handlers and middleware stack are frozen into the ASGI app when the
+process builds, so a router or middleware plugin — net-new or an upgrade of an
+already-listed one — takes effect only when each pod restarts
+(`kubectl rollout restart`).
+
+## Upgrading
+
+Moving a release to a new chart/image version is three steps — the Helm
+upgrade, then bringing the marketplace-installed plugins up to the new core
+(release name `tai` shown; the serve Deployment is `<fullname>-serve`):
+
+```bash
+# 1. Move the release to the new version; the pods roll onto the new image.
+helm upgrade tai oci://ghcr.io/tai42ai/charts/tai --version <new> --reuse-values
+
+# 2. Move every marketplace-installed plugin to its newest compatible version.
+kubectl exec deploy/tai-serve -- tai plugins upgrade --all
+
+# 3. Verify: every row's compat verdict, and anything still quarantined.
+kubectl exec deploy/tai-serve -- tai plugins installed
+```
+
+**Why the plugins survive the roll.** The new pods run the new image — a new
+baked-in venv — but the plugin-prefix PVC (`pluginPrefix.enabled=true`)
+outlives every pod, so the installed plugin code carries over, and under
+`config.mode=k8s` each plugin's manifest registration lives in the ConfigMap,
+which the upgrade does not rewrite. That is the same
+[runtime-install-durable combination](#plugin-persistence) a runtime install
+needs; without it there is nothing to carry over, and this section's step 2/3
+apply only to plugins baked into a derived image (which the new image tag must
+simply include again).
+
+**Why step 2 exists.** The carried-over plugins were installed against the OLD
+release's core, and the new image may ship a newer `tai42-contract`. A plugin
+whose declared contract range excludes the running contract cannot be loaded —
+and boot does not crash on it: the server **quarantines** it, starting without
+it, serving everything else, and naming the plugin and the reason loudly in the
+startup log and in the installed listing (`/api/marketplace/installed`).
+`tai plugins upgrade --all` then moves every installed plugin onto its newest
+version compatible with the running core, re-patching the manifest and
+reloading as it goes, and reports one outcome per plugin (`upgraded` /
+`up-to-date` / `no-compatible-version` / `failed`). Each such reload is
+broadcast fleet-wide on the worker bus, so every serve and backend pod
+re-imports the upgraded plugins in place — no pod restart is needed, the very
+first install included (the prefix site dirs are on each pod's `sys.path` from
+boot even while empty, and every reload invalidates the import caches). The one
+exception is **router** and **middleware** plugins: their handlers and middleware
+stack are frozen into the ASGI app when the process builds, so a router or
+middleware plugin — net-new or an upgrade of an already-listed one — takes effect
+only when each pod restarts (`kubectl rollout restart`).
+Step 3's
+`tai plugins installed` confirms the result: each row's compat verdict, update
+availability, and any plugin still quarantined.
 
 ## Configuration
 
