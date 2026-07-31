@@ -1,0 +1,113 @@
+# Keeps docker/pypi-requirements.txt tracking the latest published platform
+# releases. Fired by the monorepo's release workflow after each component
+# publishes (and manually via workflow_dispatch). The run re-reads PyPI for
+# EVERY pinned package, so a burst of dispatches from one release train
+# coalesces losslessly — the newest run always computes the full final roster,
+# which is why in-flight runs are safe to cancel.
+#
+# The change lands as a PR whose auto-merge is gated by branch protection's
+# required checks; its `fix(image):` type then drives release-please to cut the
+# image release. The PAT (not GITHUB_TOKEN) authors branch, PR, and merge so
+# every follow-on workflow fires.
+name: refresh-pins
+
+on:
+  repository_dispatch:
+    types: [platform-release]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: refresh-pins
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      - name: Rewrite pins to the latest published versions
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          # Rewrites each `tai42-<name>[extras]==<version>` pin in
+          # docker/pypi-requirements.txt to the newest non-yanked stable
+          # release on PyPI. Only already-pinned packages are touched — the
+          # roster itself never changes here. Any package missing from the
+          # index fails the run loudly.
+          import json
+          import re
+          import sys
+          import urllib.request
+
+          from pathlib import Path
+
+          PIN = re.compile(r"^(tai42-[a-z0-9-]+)(\[[^]]*\])?==(\S+)$")
+          path = Path("docker/pypi-requirements.txt")
+          lines = path.read_text().splitlines(keepends=True)
+
+          def latest(name: str) -> str:
+              with urllib.request.urlopen(
+                  f"https://pypi.org/pypi/{name}/json", timeout=30
+              ) as resp:
+                  data = json.load(resp)
+              best = None
+              for version, files in data["releases"].items():
+                  if not files or all(f.get("yanked") for f in files):
+                      continue
+                  # Split off the local-version segment, then a trailing
+                  # `.post<N>`: a post-release is a stable final, so it must
+                  # clear the letter test that rejects a pre-release identifier
+                  # (rc/a/b/dev). Its N then orders `X.Y.Z.postN` after `X.Y.Z`.
+                  base = version.split("+")[0]
+                  post = re.search(r"\.post(\d+)$", base)
+                  release = base[: post.start()] if post else base
+                  if re.search(r"[a-zA-Z]", release.replace(".", "")):
+                      print(f"skipping {name} {version} (pre-release)")
+                      continue  # prereleases never auto-pin
+                  key = (tuple(int(p) for p in release.split(".")), int(post.group(1)) if post else 0)
+                  if best is None or key > best[0]:
+                      best = (key, version)
+              if best is None:
+                  sys.exit(f"::error::no stable release of {name} on PyPI")
+              return best[1]
+
+          changed = False
+          out = []
+          for line in lines:
+              m = PIN.match(line.strip())
+              if not m:
+                  out.append(line)
+                  continue
+              name, extras, current = m.groups()
+              new = latest(name)
+              if new != current:
+                  changed = True
+                  print(f"{name}: {current} -> {new}")
+              out.append(f"{name}{extras or ''}=={new}\n")
+
+          path.write_text("".join(out))
+          Path("pins.changed").write_text("1" if changed else "0")
+          PY
+          echo "changed=$(cat pins.changed)" >> "$GITHUB_ENV"
+          rm pins.changed
+      - name: Land the refreshed pins through a gated PR
+        if: env.changed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "tai42-dev"
+          git config user.email "dev@tai42.ai"
+          git checkout -B refresh-pins
+          git add docker/pypi-requirements.txt
+          git commit -m "fix(image): track the latest platform releases"
+          git push -f origin refresh-pins
+          pr=$(gh pr list --head refresh-pins --json url --jq '.[0].url')
+          if [ -z "$pr" ]; then
+            pr=$(gh pr create --fill --head refresh-pins)
+          fi
+          gh pr merge --auto --squash "$pr"

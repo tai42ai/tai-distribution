@@ -152,10 +152,11 @@ availability, and any plugin still quarantined.
 ## Building locally
 
 Release builds pull `tai42-*` from PyPI and fetch tai-studio at the commit SHA
-recorded in `docker/STUDIO_REF`. A dev build instead uses your local sibling
-checkouts (all `tai-*` repos cloned beside this one). Because the sibling
-context is the parent directory of every checkout — which may hold untracked
-secrets — the dev build MUST run on a LOCAL builder only:
+recorded in `docker/STUDIO_REF`. A dev build instead uses your local checkouts:
+the `tai42/` monorepo (platform members at `core/{contract,kit,skeleton}` +
+`plugins/*`) and the `tai-studio` repo, both cloned beside this one. Because the
+siblings context is the directory holding those checkouts — which may hold
+untracked secrets — the dev build MUST run on a LOCAL builder only:
 
 ```sh
 docker buildx build -f docker/Dockerfile \
@@ -167,7 +168,7 @@ docker buildx build -f docker/Dockerfile \
 To build and run the whole stack from source, layer the
 `docker-compose.local.yml` override on the base compose — it adds the same
 `SOURCE=local` build to every app service, so `up --build` builds the image from
-your sibling checkouts and starts the stack against it. It takes the same
+your local checkouts and starts the stack against it. It takes the same
 `.env` + `config/` the quickstart below needs:
 
 ```sh
@@ -178,9 +179,10 @@ TAI_VERSION=local docker compose \
   -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
-The `siblings` build context defaults to the parent of the checkouts (`../..`);
-override it with `TAI_SIBLINGS`. Because that context may hold untracked
-secrets, run this on a LOCAL builder only — never CI or a shared registry.
+The `siblings` build context defaults to the directory holding those checkouts
+(`../..`); override it with `TAI_SIBLINGS`. Because that context may hold
+untracked secrets, run this on a LOCAL builder only — never CI or a shared
+registry.
 
 ## Repository layout
 

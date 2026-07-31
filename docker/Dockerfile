@@ -3,10 +3,12 @@
 # frontend fails to parse it. Keep the -labs suffix.
 
 # One image, two source modes, selected by --build-arg SOURCE=<local|pypi>:
-#   local  — dev build from sibling checkouts (studio built from the local
-#            tai-studio tree; tai42-* installed from local package trees). Runs on
-#            a LOCAL builder only: the `siblings` named build context is the
-#            parent directory of every checkout and carries untracked secrets.
+#   local  — dev build from local checkouts (studio built from the live
+#            tai-studio sibling tree; tai42-* installed from the tai42/ monorepo
+#            member trees at core/{contract,kit,skeleton} + plugins/*). Runs on a
+#            LOCAL builder only: the `siblings` named build context is the
+#            directory holding tai42/ and tai-studio/ and carries untracked
+#            secrets.
 #   pypi   — release build (studio built from tai42ai/tai-studio at STUDIO_REF;
 #            tai42-* installed from PyPI at the exact pins in
 #            docker/pypi-requirements.txt, binary wheels only).
@@ -81,9 +83,9 @@ FROM studio-${SOURCE} AS studio
 # storage, arq backend, redis identity, k8s config). Every other channel,
 # storage, backend, connector, verifier, and tool is installed at runtime via
 # the marketplace or baked into a derived image.
-# Splits on SOURCE for the same reason as studio: venv-local COPYs the sibling
-# package trees and installs from them; venv-pypi installs pinned wheels and
-# never references the siblings context (which does not exist on CI).
+# Splits on SOURCE for the same reason as studio: venv-local COPYs the tai42/
+# monorepo member trees and installs from them; venv-pypi installs pinned wheels
+# and never references the siblings context (which does not exist on CI).
 # ---------------------------------------------------------------------------
 FROM python:3.13-slim AS uv-base
 # Pinned uv binary from the official distroless image; matches the local uv.
@@ -94,7 +96,7 @@ ENV VIRTUAL_ENV=/opt/tai/venv \
     UV_COMPILE_BYTECODE=1
 RUN uv venv "$VIRTUAL_ENV" && python -m ensurepip --upgrade
 
-# Dev install: COPY each package's FULL directory (build backends need
+# Dev install: COPY each monorepo member's FULL directory (build backends need
 # README/LICENSE/NOTICE named in license-files — pyproject+src alone fails).
 # Excludes drop stale build artifacts: a leftover setuptools `build/lib` is
 # reused instead of `src/`, packaging stale code; `dist/` and `*.egg-info`
@@ -108,26 +110,26 @@ RUN uv venv "$VIRTUAL_ENV" && python -m ensurepip --upgrade
 # final stage. --no-sources ignores those tables so every package is a regular
 # wheel install that survives the venv copy.
 FROM uv-base AS venv-local
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-contract/               /src/tai-contract/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-kit/                    /src/tai-kit/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-toolbox/                /src/tai-toolbox/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-skeleton/               /src/tai-skeleton/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-agents/                 /src/tai-agents/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-storage-local/          /src/tai-storage-local/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-backend-arq/            /src/tai-backend-arq/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-identity-redis/         /src/tai-identity-redis/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai-config-k8s/             /src/tai-config-k8s/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/contract/          /src/contract/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/kit/               /src/kit/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/toolbox/        /src/toolbox/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/skeleton/          /src/skeleton/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/agents/         /src/agents/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/storage-local/   /src/storage-local/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/backend-arq/     /src/backend-arq/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/identity-redis/  /src/identity-redis/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/config-k8s/      /src/config-k8s/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --no-sources \
-      /src/tai-contract \
-      /src/tai-kit \
-      /src/tai-toolbox \
-      "/src/tai-skeleton[toolbox,files]" \
-      /src/tai-agents \
-      /src/tai-storage-local \
-      /src/tai-backend-arq \
-      /src/tai-identity-redis \
-      /src/tai-config-k8s
+      /src/contract \
+      /src/kit \
+      /src/toolbox \
+      "/src/skeleton[toolbox,files]" \
+      /src/agents \
+      /src/storage-local \
+      /src/backend-arq \
+      /src/identity-redis \
+      /src/config-k8s
 
 # Release install: the first-party set comes from docker/pypi-requirements.txt,
 # which pins EACH package to its own version. Packages release independently, so

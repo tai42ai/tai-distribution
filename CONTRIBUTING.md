@@ -11,9 +11,9 @@ pins every first-party `tai42-*` package.
   at a matching release; keep the image, chart, and compose bundle in lockstep.
 - **Release builds pull from PyPI.** The release image installs `tai42-*` from
   PyPI and fetches tai-studio at the SHA in `docker/STUDIO_REF`. Only the dev
-  build (`SOURCE=local`) uses local sibling checkouts, and it MUST run on a
-  local builder — its context is the parent directory of every checkout, which
-  may hold untracked secrets.
+  build (`SOURCE=local`) uses local checkouts — the `tai42` monorepo and the
+  `tai-studio` repo — and it MUST run on a local builder — its context is the
+  directory holding those checkouts, which may hold untracked secrets.
 - **Multi-arch stays multi-arch.** The image builds for amd64 + arm64; don't add
   arch-specific steps that break either target.
 
@@ -57,18 +57,21 @@ infra service for a plugin you add yourself, not the plugin itself.
 ## Naming
 
 PyPI is a flat namespace with no owner in the path, so distributions carry the
-`tai42-` prefix. GitHub repositories keep their `tai-` names, because the
-`tai42ai` organisation already namespaces them. Import packages follow the
-distribution.
+`tai42-` prefix. The platform packages live as members inside the `tai42`
+monorepo at `core/<name>` or `plugins/<name>`; the live standalone repos (e.g.
+`tai-studio`) keep their `tai-<name>` names, because the `tai42ai` organisation
+already namespaces them. Import packages follow the distribution.
 
 | Surface | Form |
 | --- | --- |
 | Distribution — PyPI, `pip install`, dependency pins | `tai42-<name>` |
 | Import package | `tai42_<name>` |
-| GitHub repository | `tai-<name>` |
+| Monorepo member directory | `core/<name>` or `plugins/<name>` |
+| Standalone GitHub repository | `tai-<name>` |
 
-So a dependency is declared as `tai42-<name>` while its repository is named
-`tai-<name>`, and both spellings are correct in their own context.
+So a dependency is declared as `tai42-<name>` while its source lives at
+`core/<name>` / `plugins/<name>` in the `tai42` monorepo (or, for a standalone
+repo, at `tai-<name>`), and every spelling is correct in its own context.
 
 Some surfaces are deliberately neither, and must not be renamed: the `tai` CLI
 command (`tai42` is an alias), the Prometheus metric namespace (`tai_tool_*`),
@@ -76,8 +79,9 @@ command (`tai42` is an alias), the Prometheus metric namespace (`tai_tool_*`),
 
 ## Dev
 
-Build the image from your local sibling checkouts (all `tai-*` repos cloned
-beside this one) on a local builder — see the README for the full note on why:
+Build the image from your local checkouts — the `tai42` monorepo and the
+`tai-studio` repo cloned beside this one — on a local builder; see the README
+for the full note on why:
 
 ```sh
 docker buildx build -f docker/Dockerfile \

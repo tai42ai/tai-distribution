@@ -1,0 +1,25 @@
+# Release PRs merge themselves the moment branch protection's required checks
+# pass — the release train has no human step. The PAT (not GITHUB_TOKEN) must
+# both enable auto-merge and author the merge commit: refs written by
+# GITHUB_TOKEN fire no workflows, so a GITHUB_TOKEN merge would strand the
+# train before its tag ever published.
+name: release-automerge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: >-
+      startsWith(github.head_ref, 'release-please--') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Enable auto-merge on the release PR
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
