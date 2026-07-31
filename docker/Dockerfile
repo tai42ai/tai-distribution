@@ -25,8 +25,12 @@ FROM node:22-alpine AS studio-base
 # source (studio-pypi) and by tai-studio's own `prepare` hook (lefthook
 # install) that runs on every `pnpm install`.
 RUN apk add --no-cache git
-# corepack resolves the pnpm version pinned in tai-studio's packageManager
-# field; disable its first-run download prompt so the build is non-interactive.
+# corepack resolves the pnpm version and integrity hash pinned in tai-studio's
+# packageManager field, verifying the fetched binary; disable its first-run
+# download prompt so the build is non-interactive. That binary is fetched on the
+# first `pnpm` call in the studio-local/studio-pypi stages, where the install is
+# wrapped in a bounded retry: a single connection reset there would otherwise
+# abort an already-pinned build.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /studio
@@ -56,7 +60,15 @@ RUN git init -q
 # references 17 workspace packages' emitting configs, so they must be built
 # first. `pnpm --filter @tai42/studio-app build` alone leaves them unbuilt and
 # tsc fails to resolve them. The app build emits apps/studio/dist.
-RUN pnpm install --frozen-lockfile \
+# Retry the network-bound install (3 attempts, backoff, loud failure); the
+# recursive build is local and stays outside it.
+RUN n=1; while true; do \
+      pnpm install --frozen-lockfile && break; \
+      status=$?; \
+      [ "$n" -ge 3 ] && { echo "pnpm install failed after $n attempts (exit $status)" >&2; exit "$status"; }; \
+      echo "pnpm install attempt $n failed (exit $status); retrying in $((n * 5))s" >&2; \
+      sleep $((n * 5)); n=$((n + 1)); \
+    done \
  && pnpm -r build
 
 # Release: fetch tai42ai/tai-studio at the pinned commit SHA. node:22-alpine
@@ -72,7 +84,15 @@ RUN git init \
 # Build recursively (tai-studio's own CI recipe): @tai42/studio-app's tsc build
 # references 17 workspace packages' emitting configs, so they must be built
 # first. The app build emits apps/studio/dist.
-RUN pnpm install --frozen-lockfile \
+# Retry the network-bound install (3 attempts, backoff, loud failure); the
+# recursive build is local and stays outside it.
+RUN n=1; while true; do \
+      pnpm install --frozen-lockfile && break; \
+      status=$?; \
+      [ "$n" -ge 3 ] && { echo "pnpm install failed after $n attempts (exit $status)" >&2; exit "$status"; }; \
+      echo "pnpm install attempt $n failed (exit $status); retrying in $((n * 5))s" >&2; \
+      sleep $((n * 5)); n=$((n + 1)); \
+    done \
  && pnpm -r build
 
 FROM studio-${SOURCE} AS studio
