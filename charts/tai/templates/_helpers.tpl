@@ -167,6 +167,11 @@ P_PG_HOST/PORT/DB/USER (plain) + P_PG_PASSWORD (from the db secret).
 {{- if .Values.features.marketplace.enabled -}}{{- $prefixes = append $prefixes "MARKETPLACE_STORE_" -}}{{- end -}}
 {{/* TAI_DB_ is the schema-admin connection used by `tai db apply`; wired whenever any feature is on. */}}
 {{- if include "tai.anyPgFeature" . -}}{{- $prefixes = append $prefixes "TAI_DB_" -}}{{- end -}}
+{{/* TOOL_META_STORE_ backs the tool/flow folders+tags overlay — a platform
+     primitive with no feature toggle, always active in the app. Its tables ride
+     the same bundled DDL, so wire it whenever any PG feature brings up a
+     schema-applied Postgres (same gate as TAI_DB_). */}}
+{{- if include "tai.anyPgFeature" . -}}{{- $prefixes = append $prefixes "TOOL_META_STORE_" -}}{{- end -}}
 {{- $prefixes | toJson -}}
 {{- end -}}
 

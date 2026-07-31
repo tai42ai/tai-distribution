@@ -141,6 +141,11 @@ x-tai-app-env: &tai-app-env
   VERSIONING_STORE_PG_DB: "${POSTGRES_DB:-tai}"
   VERSIONING_STORE_PG_USER: "${POSTGRES_USER:-tai}"
   VERSIONING_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  TOOL_META_STORE_PG_HOST: postgres
+  TOOL_META_STORE_PG_PORT: "5432"
+  TOOL_META_STORE_PG_DB: "${POSTGRES_DB:-tai}"
+  TOOL_META_STORE_PG_USER: "${POSTGRES_USER:-tai}"
+  TOOL_META_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
 
   # --- Prometheus multiprocess dir (same path, per-writer volume) --------------
   # An absolute path the app makes on boot, mounted over the tai user's home
