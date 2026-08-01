@@ -20,6 +20,16 @@ updates:
       docker:
         patterns:
           - "*"
+    # Base runtimes are deliberate pins (node LTS, the fleet's python); moving
+    # them is a manual decision, not a bot bump. python's feature line is its
+    # minor number (3.13 -> 3.14), so minors are pinned too; patch/digest
+    # updates still flow.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: pip
     directory: /docker
     schedule:
