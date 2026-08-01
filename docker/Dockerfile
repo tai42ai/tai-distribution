@@ -20,7 +20,7 @@ ARG STUDIO_REF
 # Studio build — produces the tai-studio SPA dist. Splits on SOURCE because a
 # single stage cannot conditionally COPY-from-siblings vs git-fetch inline.
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS studio-base
+FROM node:25-alpine AS studio-base
 # node:22-alpine ships no git, but git is needed both to fetch the release
 # source (studio-pypi) and by tai-studio's own `prepare` hook (lefthook
 # install) that runs on every `pnpm install`.
@@ -107,7 +107,7 @@ FROM studio-${SOURCE} AS studio
 # monorepo member trees and installs from them; venv-pypi installs pinned wheels
 # and never references the siblings context (which does not exist on CI).
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS uv-base
+FROM python:3.14-slim AS uv-base
 # Pinned uv binary from the official distroless image; matches the local uv.
 COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /uvx /bin/
 ENV VIRTUAL_ENV=/opt/tai/venv \
@@ -175,7 +175,7 @@ FROM venv-${SOURCE} AS venv
 # ---------------------------------------------------------------------------
 # Final image — minimal core, non-root, one entrypoint (`tai`).
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS final
+FROM python:3.14-slim AS final
 
 ARG VERSION
 LABEL org.opencontainers.image.title="tai" \
