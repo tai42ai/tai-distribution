@@ -231,7 +231,7 @@ The schema-init hook's phase depends on who owns the database:
 | --- | --- | --- |
 | `features.accessControl.enabled` | authn/authz policy store | `ACCESS_CONTROL_STORE_` |
 | `features.versioning.enabled` | presets + policy history | `VERSIONING_STORE_` |
-| `features.accounts.enabled` | accounts (tai42-accounts-postgres — **not in the minimal image**; add via a derived image or marketplace install first) | `TAI_ACCOUNTS_PG_` (rendered vars double the PG: `TAI_ACCOUNTS_PG_PG_HOST` … — the names the plugin's settings read) |
+| `features.accounts.enabled` | accounts (tai42-accounts-postgres — **not in the minimal image**; add via a derived image or marketplace install first) | `TAI_ACCOUNTS_` (rendered vars: `TAI_ACCOUNTS_PG_HOST` …) |
 | `features.connectors.enabled` | OAuth connector store | `CONNECTOR_STORE_` |
 | `features.marketplace.enabled` | marketplace plugin store | `MARKETPLACE_STORE_` |
 

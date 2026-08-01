@@ -159,10 +159,9 @@ P_PG_HOST/PORT/DB/USER (plain) + P_PG_PASSWORD (from the db secret).
 {{- $prefixes := list -}}
 {{- if .Values.features.accessControl.enabled -}}{{- $prefixes = append $prefixes "ACCESS_CONTROL_STORE_" -}}{{- end -}}
 {{- if .Values.features.versioning.enabled -}}{{- $prefixes = append $prefixes "VERSIONING_STORE_" -}}{{- end -}}
-{{- /* The accounts plugin's settings put env_prefix TAI_ACCOUNTS_PG_ over
-       fields already named pg_* — so the env names it reads double the PG:
-       TAI_ACCOUNTS_PG_PG_HOST etc. The chart must emit what the code reads. */ -}}
-{{- if .Values.features.accounts.enabled -}}{{- $prefixes = append $prefixes "TAI_ACCOUNTS_PG_" -}}{{- end -}}
+{{- /* The accounts plugin's settings put env_prefix TAI_ACCOUNTS_ over fields
+       named pg_* — so the env names it reads are TAI_ACCOUNTS_PG_HOST etc. */ -}}
+{{- if .Values.features.accounts.enabled -}}{{- $prefixes = append $prefixes "TAI_ACCOUNTS_" -}}{{- end -}}
 {{- if .Values.features.connectors.enabled -}}{{- $prefixes = append $prefixes "CONNECTOR_STORE_" -}}{{- end -}}
 {{- if .Values.features.marketplace.enabled -}}{{- $prefixes = append $prefixes "MARKETPLACE_STORE_" -}}{{- end -}}
 {{/* TAI_DB_ is the schema-admin connection used by `tai db apply`; wired whenever any feature is on. */}}
