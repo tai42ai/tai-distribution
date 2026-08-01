@@ -3,9 +3,10 @@
 # both enable auto-merge and author the merge commit: refs written by
 # GITHUB_TOKEN fire no workflows, so a GITHUB_TOKEN merge would strand the
 # train before its tag ever published.
-# Strict branch protection marks an armed release PR out-of-date on every push
-# to main, and release-please refreshes the release branch only on releasable
-# commits, so the refresh job re-syncs armed release PRs on each push.
+# Strict branch protection marks an armed bot PR out-of-date on every push to
+# main, and nothing else refreshes those branches (release-please only on
+# releasable commits; refresh-pins/refresh-studio-ref only on their dispatch),
+# so the refresh job re-syncs every armed bot-lane PR on each push.
 name: release-automerge
 
 on:
@@ -37,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           numbers=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
-            --jq ".[] | select(.head.ref | startswith(\"release-please--\")) | select(.head.repo.full_name == \"$REPO\") | .number")
+            --jq ".[] | select((.head.ref | startswith(\"release-please--\")) or .head.ref == \"refresh-pins\" or .head.ref == \"refresh-studio-ref\") | select(.head.repo.full_name == \"$REPO\") | .number")
           for n in $numbers; do
             if out=$(gh api -X PUT "repos/$REPO/pulls/$n/update-branch" 2>&1); then
               echo "Refreshed PR #$n"
