@@ -203,7 +203,8 @@ COPY --from=studio /studio/apps/studio/dist /opt/tai/studio-dist
 # writable bind mount / volume works under the non-root user.
 RUN install -d -o tai -g tai /app
 WORKDIR /app
-USER tai
+# Numeric uid:gid so runtimes can verify non-root without resolving the name.
+USER 1000:1000
 
 # Liveness against serve's default :8000/health, via the Python stdlib —
 # python:3.13-slim ships neither curl nor wget. Generous start-period: boot
