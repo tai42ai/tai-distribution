@@ -219,21 +219,14 @@ Emits a YAML list of env entries. Pass the root context.
      OFF, not a silent localhost, so the chart wires every var explicitly to run
      these features against the chart's Redis. These surfaces are inert until
      used: their env presence alone opens no store at boot. */}}
-{{- range list "ACCESS_CONTROL_REDIS_URL" "INTERACTIONS_REDIS_URL" "TAI_TOOL_RUNS_REDIS_URL" "TAI_RATE_LIMIT_REDIS_URL" "HOOKS_REDIS_URL" }}
+{{- range list "ACCESS_CONTROL_REDIS_URL" "INTERACTIONS_REDIS_URL" "TAI_TOOL_RUNS_REDIS_URL" "TAI_RATE_LIMIT_REDIS_URL" "HOOKS_REDIS_URL" "CONNECTOR_STORE_REDIS_URL" }}
 - name: {{ . }}
   value: {{ include "tai.redis.url" $ | quote }}
 {{- end }}
-{{/* Connector store redis URL. Unlike the URLs above, the app marks connectors
-     "in use" from the mere presence of any CONNECTOR_STORE_* env and opens the
-     connector catalog's Postgres at boot — so this is wired ONLY when the
-     connectors feature is on, together with its CONNECTOR_STORE_PG_* half, never
-     unconditionally (which would half-activate connectors and stall boot on an
-     unwired Postgres). */}}
-{{- if .Values.features.connectors.enabled }}
-- name: CONNECTOR_STORE_REDIS_URL
-  value: {{ include "tai.redis.url" . | quote }}
-{{- end }}
-{{/* Postgres-backed feature connections. */}}
+{{/* Postgres-backed feature connections. The connector store's CONNECTOR_STORE_PG_*
+     half rides this range only when features.connectors is on (see
+     tai.pgFeaturePrefixes) — a supplied PG password is what actually turns
+     connectors on, so the Redis cache URL above is safe to wire unconditionally. */}}
 {{- $root := . -}}
 {{- range $prefix := (include "tai.pgFeaturePrefixes" . | fromJsonArray) }}
 - name: {{ $prefix }}PG_HOST

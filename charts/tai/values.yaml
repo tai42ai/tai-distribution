@@ -377,10 +377,10 @@ pluginPrefix:
 # adds its schema to the `tai db apply` init hook. The rate limiter, interactions,
 # tool-runs, hooks and access-control Redis URLs are wired to the chart's Redis
 # endpoint unconditionally (inert until used) so those features work out of the
-# box. The connector store's Redis URL is the exception: the app treats any
-# CONNECTOR_STORE_* env presence as "connectors in use" and opens the connector
-# catalog's Postgres at boot, so it is wired only when features.connectors is on,
-# alongside its Postgres half — never unconditionally.
+# box — the connector store's Redis cache URL is wired unconditionally alongside
+# them. Connectors gates on its store like every other DB feature: a supplied
+# CONNECTOR_STORE_PG_* password is the on signal, so that Postgres half is wired
+# only when features.connectors is on. The Redis URL alone opens no store at boot.
 features:
   # Access control (authn/authz). OFF by default so the quickstart boots with no
   # identity provider or key seeding. Turning it on requires naming an identity
