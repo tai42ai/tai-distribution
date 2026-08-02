@@ -23,11 +23,11 @@
 # install set in docker/Dockerfile — the image ships one roster regardless of
 # SOURCE.
 tai42-contract==0.3.0
-tai42-kit==0.3.1
-tai42-toolbox==0.3.5
-tai42-skeleton[toolbox,files]==0.5.2
-tai42-agents==0.3.4
-tai42-storage-local==0.2.4
-tai42-backend-arq==0.4.2
-tai42-identity-redis==0.2.4
-tai42-config-k8s==0.2.4
+tai42-kit==0.4.0
+tai42-toolbox==0.3.6
+tai42-skeleton[toolbox,files]==0.6.0
+tai42-agents==0.3.5
+tai42-storage-local==0.2.5
+tai42-backend-arq==0.4.3
+tai42-identity-redis==0.2.5
+tai42-config-k8s==0.2.5
