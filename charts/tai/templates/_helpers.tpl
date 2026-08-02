@@ -214,9 +214,10 @@ Emits a YAML list of env entries. Pass the root context.
 {{/* Access control toggle. */}}
 - name: ACCESS_CONTROL_ENABLE
   value: {{ .Values.features.accessControl.enabled | quote }}
-{{/* Redis-backed feature URLs (wired to the chart redis endpoint). Wired
-     unconditionally — each defaults to localhost otherwise, which fails loudly
-     in-pod the moment its feature is exercised. These surfaces are inert until
+{{/* Redis-backed feature URLs (wired to the chart redis endpoint). Connection
+     identity has no baked-in default: an unset URL means the feature is cleanly
+     OFF, not a silent localhost, so the chart wires every var explicitly to run
+     these features against the chart's Redis. These surfaces are inert until
      used: their env presence alone opens no store at boot. */}}
 {{- range list "ACCESS_CONTROL_REDIS_URL" "INTERACTIONS_REDIS_URL" "TAI_TOOL_RUNS_REDIS_URL" "TAI_RATE_LIMIT_REDIS_URL" "HOOKS_REDIS_URL" }}
 - name: {{ . }}
