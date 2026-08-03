@@ -1,9 +1,15 @@
 # Keeps docker/pypi-requirements.txt tracking the latest published platform
 # releases. Fired by the monorepo's release workflow after each component
-# publishes (and manually via workflow_dispatch). The run re-reads PyPI for
-# EVERY pinned package, so a burst of dispatches from one release train
-# coalesces losslessly — the newest run always computes the full final roster,
-# which is why in-flight runs are safe to cancel.
+# publishes (and manually via workflow_dispatch).
+#
+# The target version per package comes from the monorepo's release tags
+# (tai42-<package>-v<version>) — the authoritative, immediately-consistent
+# record of what was released. PyPI's JSON API sits behind a CDN cache and can
+# lag a publish by minutes, so it is only polled until it has caught up with
+# the tagged version; a package that never appears fails the run loudly. This
+# is why a burst of dispatches from one release train coalesces losslessly —
+# the newest run reads the full final roster from tags, and in-flight runs are
+# safe to cancel.
 #
 # The change lands as a PR whose auto-merge is gated by branch protection's
 # required checks; its `fix(image):` type then drives release-please to cut the
@@ -29,52 +35,113 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-      - name: Rewrite pins to the latest published versions
+      - name: Rewrite pins to the latest released versions
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          MONOREPO: ${{ github.repository_owner }}/tai42
         run: |
           set -euo pipefail
           python3 - <<'PY'
           # Rewrites each `tai42-<name>[extras]==<version>` pin in
-          # docker/pypi-requirements.txt to the newest non-yanked stable
-          # release on PyPI. Only already-pinned packages are touched — the
-          # roster itself never changes here. Any package missing from the
-          # index fails the run loudly.
+          # docker/pypi-requirements.txt. The target per package is the newest
+          # stable release tag in the monorepo; PyPI is polled until it serves
+          # that version (or newer). Only already-pinned packages are touched —
+          # the roster itself never changes here. A package with no release tag,
+          # or whose tagged version never becomes installable, fails the run.
           import json
+          import os
           import re
           import sys
+          import time
+          import urllib.error
           import urllib.request
 
           from pathlib import Path
 
           PIN = re.compile(r"^(tai42-[a-z0-9-]+)(\[[^]]*\])?==(\S+)$")
-          path = Path("docker/pypi-requirements.txt")
-          lines = path.read_text().splitlines(keepends=True)
+          TAG = re.compile(r"^refs/tags/(tai42-[a-z0-9-]+)-v(\S+)$")
+          MONOREPO = os.environ["MONOREPO"]
+          PYPI_DEADLINE = 600  # seconds to wait for PyPI's index per package
 
-          def latest(name: str) -> str:
-              with urllib.request.urlopen(
-                  f"https://pypi.org/pypi/{name}/json", timeout=30
-              ) as resp:
-                  data = json.load(resp)
+          def stable_key(version):
+              # Sort key for a stable version, None for a pre-release. The
+              # local-version segment is split off first, then a trailing
+              # `.post<N>`: a post-release is a stable final, so it must clear
+              # the letter test that rejects a pre-release identifier
+              # (rc/a/b/dev). Its N then orders `X.Y.Z.postN` after `X.Y.Z`.
+              base = version.split("+")[0]
+              post = re.search(r"\.post(\d+)$", base)
+              release = base[: post.start()] if post else base
+              if re.search(r"[a-zA-Z]", release.replace(".", "")):
+                  return None
+              return (
+                  tuple(int(p) for p in release.split(".")),
+                  int(post.group(1)) if post else 0,
+              )
+
+          def tagged_latest():
+              # Newest stable tagged version per component, from the monorepo's
+              # release tags. The matching-refs endpoint may serve every match
+              # in one response or honor page/per_page, so pages are walked
+              # until one contributes no new ref.
+              latest = {}
+              seen = set()
+              page = 1
+              while True:
+                  req = urllib.request.Request(
+                      f"https://api.github.com/repos/{MONOREPO}/git/"
+                      f"matching-refs/tags/tai42-?per_page=100&page={page}",
+                      headers={
+                          "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                          "Accept": "application/vnd.github+json",
+                          "User-Agent": "tai-distribution-refresh-pins",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      refs = json.load(resp)
+                  new_refs = [r for r in refs if r["ref"] not in seen]
+                  if not new_refs:
+                      return latest
+                  for ref in new_refs:
+                      seen.add(ref["ref"])
+                      m = TAG.match(ref["ref"])
+                      if not m:
+                          continue
+                      name, version = m.groups()
+                      key = stable_key(version)
+                      if key and (name not in latest or key > latest[name][0]):
+                          latest[name] = (key, version)
+                  page += 1
+
+          def pypi_best(name):
+              # Newest stable, non-yanked version PyPI's index currently
+              # serves, or None while the package is not visible at all.
+              req = urllib.request.Request(
+                  f"https://pypi.org/pypi/{name}/json",
+                  headers={
+                      "Cache-Control": "no-cache",
+                      "User-Agent": "tai-distribution-refresh-pins",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      data = json.load(resp)
+              except urllib.error.HTTPError as err:
+                  if err.code == 404:
+                      return None
+                  raise
               best = None
               for version, files in data["releases"].items():
                   if not files or all(f.get("yanked") for f in files):
                       continue
-                  # Split off the local-version segment, then a trailing
-                  # `.post<N>`: a post-release is a stable final, so it must
-                  # clear the letter test that rejects a pre-release identifier
-                  # (rc/a/b/dev). Its N then orders `X.Y.Z.postN` after `X.Y.Z`.
-                  base = version.split("+")[0]
-                  post = re.search(r"\.post(\d+)$", base)
-                  release = base[: post.start()] if post else base
-                  if re.search(r"[a-zA-Z]", release.replace(".", "")):
-                      print(f"skipping {name} {version} (pre-release)")
-                      continue  # prereleases never auto-pin
-                  key = (tuple(int(p) for p in release.split(".")), int(post.group(1)) if post else 0)
-                  if best is None or key > best[0]:
+                  key = stable_key(version)
+                  if key and (best is None or key > best[0]):
                       best = (key, version)
-              if best is None:
-                  sys.exit(f"::error::no stable release of {name} on PyPI")
-              return best[1]
+              return best
 
+          tags = tagged_latest()
+          path = Path("docker/pypi-requirements.txt")
+          lines = path.read_text().splitlines(keepends=True)
           changed = False
           out = []
           for line in lines:
@@ -83,7 +150,24 @@ jobs:
                   out.append(line)
                   continue
               name, extras, current = m.groups()
-              new = latest(name)
+              if name not in tags:
+                  sys.exit(f"::error::no release tag for {name} in {MONOREPO}")
+              target = tags[name]
+              deadline = time.time() + PYPI_DEADLINE
+              while True:
+                  best = pypi_best(name)
+                  if best and best[0] >= target[0]:
+                      break
+                  if time.time() > deadline:
+                      sys.exit(
+                          f"::error::{name} {target[1]} is tagged in "
+                          f"{MONOREPO} but PyPI still serves "
+                          f"{best[1] if best else 'nothing'} after "
+                          f"{PYPI_DEADLINE}s"
+                      )
+                  print(f"waiting for {name}=={target[1]} on PyPI…")
+                  time.sleep(15)
+              new = best[1]
               if new != current:
                   changed = True
                   print(f"{name}: {current} -> {new}")
