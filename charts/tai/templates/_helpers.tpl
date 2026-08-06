@@ -131,6 +131,55 @@ appended.
 {{- end -}}
 
 {{/*
+Memory-redis host (the module-capable quickstart service for flow memory).
+*/}}
+{{- define "tai.memoryRedis.host" -}}
+{{- printf "%s-memory-redis" (include "tai.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Whether the flow checkpoint/store conn strings are wired to a module-capable
+redis: either the quickstart leg is on, or an external one is named via
+memoryRedis.connString.
+*/}}
+{{- define "tai.memoryRedis.wired" -}}
+{{- if or .Values.memoryRedis.enabled .Values.memoryRedis.connString -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Flow checkpoint/store connection string. Explicit connString wins verbatim (the
+operator owns the full URL, auth included). Otherwise derive from the quickstart
+leg's own ClusterIP service; when memoryRedis.auth is on the derived URL carries
+the shell-style reference `$(MEMORY_REDIS_PASSWORD)`, which kubelet interpolates
+from the MEMORY_REDIS_PASSWORD env at container start — so the plaintext password
+never lands in a rendered manifest. MEMORY_REDIS_PASSWORD is declared in
+tai.commonEnv ahead of the conn strings that reference it. This leg's Secret is
+SEPARATE from the core redis's — never shared.
+*/}}
+{{- define "tai.memoryRedis.connString" -}}
+{{- if .Values.memoryRedis.connString -}}
+{{- .Values.memoryRedis.connString -}}
+{{- else -}}
+{{- $auth := "" -}}
+{{- if .Values.memoryRedis.auth.enabled -}}
+{{- $auth = ":$(MEMORY_REDIS_PASSWORD)@" -}}
+{{- end -}}
+{{- printf "redis://%s%s:%v" $auth (include "tai.memoryRedis.host" .) .Values.memoryRedis.port -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Memory-redis auth secret name — own Secret, never the core redis's.
+*/}}
+{{- define "tai.memoryRedisSecretName" -}}
+{{- if .Values.memoryRedis.auth.existingSecret -}}
+{{- .Values.memoryRedis.auth.existingSecret -}}
+{{- else -}}
+{{- printf "%s-memory-redis-auth" (include "tai.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Whether any Postgres-backed feature is enabled.
 */}}
 {{- define "tai.anyPgFeature" -}}
@@ -149,29 +198,6 @@ Whether the schema-init hook should run.
 {{- else if eq (toString $mode) "auto" -}}
 {{- include "tai.anyPgFeature" . -}}
 {{- end -}}
-{{- end -}}
-
-{{/*
-The map of enabled Postgres-feature env-var prefixes. Each prefix P wires
-P_PG_HOST/PORT/DB/USER (plain) + P_PG_PASSWORD (from the db secret).
-*/}}
-{{- define "tai.pgFeaturePrefixes" -}}
-{{- $prefixes := list -}}
-{{- if .Values.features.accessControl.enabled -}}{{- $prefixes = append $prefixes "ACCESS_CONTROL_STORE_" -}}{{- end -}}
-{{- if .Values.features.versioning.enabled -}}{{- $prefixes = append $prefixes "VERSIONING_STORE_" -}}{{- end -}}
-{{- /* The accounts plugin's settings put env_prefix TAI_ACCOUNTS_ over fields
-       named pg_* — so the env names it reads are TAI_ACCOUNTS_PG_HOST etc. */ -}}
-{{- if .Values.features.accounts.enabled -}}{{- $prefixes = append $prefixes "TAI_ACCOUNTS_" -}}{{- end -}}
-{{- if .Values.features.connectors.enabled -}}{{- $prefixes = append $prefixes "CONNECTOR_STORE_" -}}{{- end -}}
-{{- if .Values.features.marketplace.enabled -}}{{- $prefixes = append $prefixes "MARKETPLACE_STORE_" -}}{{- end -}}
-{{/* TAI_DB_ is the schema-admin connection used by `tai db migrate`; wired whenever any feature is on. */}}
-{{- if include "tai.anyPgFeature" . -}}{{- $prefixes = append $prefixes "TAI_DB_" -}}{{- end -}}
-{{/* TOOL_META_STORE_ backs the tool/flow folders+tags overlay — a platform
-     primitive with no feature toggle, always active in the app. Its tables ride
-     the same migration chain, so wire it whenever any PG feature brings up a
-     migrated Postgres (same gate as TAI_DB_). */}}
-{{- if include "tai.anyPgFeature" . -}}{{- $prefixes = append $prefixes "TOOL_META_STORE_" -}}{{- end -}}
-{{- $prefixes | toJson -}}
 {{- end -}}
 
 {{/*
@@ -223,25 +249,49 @@ Emits a YAML list of env entries. Pass the root context.
 - name: {{ . }}
   value: {{ include "tai.redis.url" $ | quote }}
 {{- end }}
-{{/* Postgres-backed feature connections. The connector store's CONNECTOR_STORE_PG_*
-     half rides this range only when features.connectors is on (see
-     tai.pgFeaturePrefixes) — a supplied PG password is what actually turns
-     connectors on, so the Redis cache URL above is safe to wire unconditionally. */}}
-{{- $root := . -}}
-{{- range $prefix := (include "tai.pgFeaturePrefixes" . | fromJsonArray) }}
-- name: {{ $prefix }}PG_HOST
-  value: {{ include "tai.postgres.host" $root | quote }}
-- name: {{ $prefix }}PG_PORT
-  value: {{ $root.Values.postgresql.port | quote }}
-- name: {{ $prefix }}PG_DB
-  value: {{ $root.Values.postgresql.database | quote }}
-- name: {{ $prefix }}PG_USER
-  value: {{ $root.Values.postgresql.username | quote }}
-- name: {{ $prefix }}PG_PASSWORD
+{{/* LangGraph flow memory (checkpoint + store). Both default to the redis
+     provider, which needs RediSearch/RedisJSON the plain core redis lacks; an
+     unset conn string falls back to the base redis namespace (the core redis),
+     where a flow run dies on FT._LIST. When the module-capable memory-redis leg
+     is on (or an external one is named), point the checkpoint and store conn
+     strings at it so redis-backed flow memory works out of the box. */}}
+{{- if include "tai.memoryRedis.wired" . }}
+{{/* Memory-redis AUTH password. Declared BEFORE the conn strings so kubelet can
+     interpolate it into their $(MEMORY_REDIS_PASSWORD) placeholder. Only on the
+     derived (quickstart) path — an explicit connString owns its own credentials.
+     Its own Secret, never the core redis's. */}}
+{{- if and .Values.memoryRedis.auth.enabled (not .Values.memoryRedis.connString) }}
+- name: MEMORY_REDIS_PASSWORD
   valueFrom:
     secretKeyRef:
-      name: {{ include "tai.dbSecretName" $root | quote }}
-      key: {{ include "tai.dbSecretKey" $root | quote }}
+      name: {{ include "tai.memoryRedisSecretName" . | quote }}
+      key: {{ .Values.memoryRedis.auth.existingSecretKey | default "memory-redis-password" | quote }}
+{{- end }}
+- name: LLM_PROVIDER_CHECKPOINT_CONN_STRING
+  value: {{ include "tai.memoryRedis.connString" . | quote }}
+- name: LLM_PROVIDER_STORE_CONN_STRING
+  value: {{ include "tai.memoryRedis.connString" . | quote }}
+{{- end }}
+{{/* Postgres registry: the "default" database. Wired whenever any PG-backed
+     feature is on (tai.anyPgFeature) — every postgres-backed component binds to
+     "default", so one connection block serves them all. Inert until a loaded
+     feature opens its store, so the Redis cache URLs above are safe to wire
+     unconditionally. The admin (migrator) identity is unset, so it falls back to
+     this runtime user/password — one identity for both. */}}
+{{- if include "tai.anyPgFeature" . }}
+- name: TAI_DATABASE_DEFAULT_PG_HOST
+  value: {{ include "tai.postgres.host" . | quote }}
+- name: TAI_DATABASE_DEFAULT_PG_PORT
+  value: {{ .Values.postgresql.port | quote }}
+- name: TAI_DATABASE_DEFAULT_PG_DB
+  value: {{ .Values.postgresql.database | quote }}
+- name: TAI_DATABASE_DEFAULT_PG_USER
+  value: {{ .Values.postgresql.username | quote }}
+- name: TAI_DATABASE_DEFAULT_PG_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "tai.dbSecretName" . | quote }}
+      key: {{ include "tai.dbSecretKey" . | quote }}
 {{- end }}
 {{- end -}}
 
@@ -363,6 +413,10 @@ SAME conditional the chart uses to wire/own it:
   * Redis   : waited ONLY when redis.enabled (the quickstart Redis this chart
               owns and races). When redis.enabled=false the endpoint is external
               and assumed already up — we do NOT block on it (external-everything).
+  * Memory  : the module-capable flow-memory leg, waited ONLY when
+    Redis       memoryRedis.enabled (the quickstart StatefulSet this chart owns
+                and races). An external memoryRedis.connString is operator-owned
+                and assumed already up — we do NOT block on it.
   * Postgres: the app opens Postgres at boot ONLY when a PG-backed feature is on
               (see tai.commonEnv). So waited ONLY when postgresql.enabled AND a PG
               feature is enabled — never in the default quickstart (no PG feature)
@@ -380,6 +434,9 @@ probe — no extra tool/image, restricted-PSA compliant via .Values.securityCont
 {{- end -}}
 {{- if and .Values.postgresql.enabled (include "tai.anyPgFeature" .) -}}
 {{- $targets = append $targets (printf "%s:%v" (include "tai.postgres.host" .) .Values.postgresql.port) -}}
+{{- end -}}
+{{- if .Values.memoryRedis.enabled -}}
+{{- $targets = append $targets (printf "%s:%v" (include "tai.memoryRedis.host" .) .Values.memoryRedis.port) -}}
 {{- end -}}
 {{- $targets | toJson -}}
 {{- end -}}

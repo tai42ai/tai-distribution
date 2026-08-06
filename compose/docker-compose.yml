@@ -45,8 +45,8 @@ x-tai-image: &tai-image "docker.io/tai42/tai:${TAI_VERSION:-latest}"
 # one anchor so the three processes can never drift on the connection settings
 # they MUST agree on (the worker bus, the task backend, the metrics multiproc
 # dir). Datastore hostnames are the fixed compose-network names; the single
-# POSTGRES_PASSWORD maps onto every per-feature store password so a deployment
-# has exactly one DB credential to set.
+# POSTGRES_PASSWORD is the "default" database's password, so a deployment has
+# exactly one DB credential to set.
 x-tai-app-env: &tai-app-env
   # --- config provider (file mode: reads /app/manifest.yml + /app/.env) -------
   TAI_CONFIG_MODE: file
@@ -109,43 +109,18 @@ x-tai-app-env: &tai-app-env
   ACCESS_CONTROL_REDIS_URL: redis://redis:6379/0
   CONNECTOR_STORE_REDIS_URL: redis://redis:6379/0
 
-  # --- postgres-backed stores (used when the manifest enables the feature) ----
-  # Every store targets the same postgres/db/user; the one POSTGRES_PASSWORD is
-  # required (no working default) so an unchanged deployment cannot ship a shared
-  # credential.
-  # TAI_DB_* is the schema-admin connection: db-migrate runs the migrations
-  # through it, and `tai doctor`'s postgres/schema probes read it — so it lives in
-  # the shared env, pointed at the same database as the runtime stores.
-  TAI_DB_PG_HOST: postgres
-  TAI_DB_PG_PORT: "5432"
-  TAI_DB_PG_DB: "${POSTGRES_DB:-tai}"
-  TAI_DB_PG_USER: "${POSTGRES_USER:-tai}"
-  TAI_DB_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-  ACCESS_CONTROL_STORE_PG_HOST: postgres
-  ACCESS_CONTROL_STORE_PG_PORT: "5432"
-  ACCESS_CONTROL_STORE_PG_DB: "${POSTGRES_DB:-tai}"
-  ACCESS_CONTROL_STORE_PG_USER: "${POSTGRES_USER:-tai}"
-  ACCESS_CONTROL_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-  CONNECTOR_STORE_PG_HOST: postgres
-  CONNECTOR_STORE_PG_PORT: "5432"
-  CONNECTOR_STORE_PG_DB: "${POSTGRES_DB:-tai}"
-  CONNECTOR_STORE_PG_USER: "${POSTGRES_USER:-tai}"
-  CONNECTOR_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-  MARKETPLACE_STORE_PG_HOST: postgres
-  MARKETPLACE_STORE_PG_PORT: "5432"
-  MARKETPLACE_STORE_PG_DB: "${POSTGRES_DB:-tai}"
-  MARKETPLACE_STORE_PG_USER: "${POSTGRES_USER:-tai}"
-  MARKETPLACE_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-  VERSIONING_STORE_PG_HOST: postgres
-  VERSIONING_STORE_PG_PORT: "5432"
-  VERSIONING_STORE_PG_DB: "${POSTGRES_DB:-tai}"
-  VERSIONING_STORE_PG_USER: "${POSTGRES_USER:-tai}"
-  VERSIONING_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
-  TOOL_META_STORE_PG_HOST: postgres
-  TOOL_META_STORE_PG_PORT: "5432"
-  TOOL_META_STORE_PG_DB: "${POSTGRES_DB:-tai}"
-  TOOL_META_STORE_PG_USER: "${POSTGRES_USER:-tai}"
-  TOOL_META_STORE_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+  # --- postgres registry: the "default" database -------------------------------
+  # Every postgres-backed component binds to the "default" database (the binding
+  # is unset, so it resolves to "default"), so one connection block serves them
+  # all. The one POSTGRES_PASSWORD is required (no working default) so an
+  # unchanged deployment cannot ship a shared credential. db-migrate and `tai
+  # doctor` use the same database; the admin (migrator) identity is unset here, so
+  # it falls back to this runtime user/password — one identity for both.
+  TAI_DATABASE_DEFAULT_PG_HOST: postgres
+  TAI_DATABASE_DEFAULT_PG_PORT: "5432"
+  TAI_DATABASE_DEFAULT_PG_DB: "${POSTGRES_DB:-tai}"
+  TAI_DATABASE_DEFAULT_PG_USER: "${POSTGRES_USER:-tai}"
+  TAI_DATABASE_DEFAULT_PG_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
 
   # --- Prometheus multiprocess dir (same path, per-writer volume) --------------
   # An absolute path the app makes on boot, mounted over the tai user's home
@@ -173,8 +148,8 @@ x-tai-app-env: &tai-app-env
 services:
   # ---- db-migrate: one-shot migration runner -------------------------------
   # Runs the app's pending migrations (ordered chain, each applied once and
-  # recorded in tai_schema_history) through the TAI_DB_* schema-admin connection
-  # before serve/backend start — their boot gate refuses a database with pending
+  # recorded in tai_schema_history) through the "default" database's admin
+  # identity before serve/backend start — their boot gate refuses a database with pending
   # migrations and fails loudly. Exits 0 when the schema is up to date;
   # serve/backend gate on that completion.
   db-migrate:

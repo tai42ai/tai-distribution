@@ -38,7 +38,8 @@ helm install tai oci://ghcr.io/tai42ai/charts/tai \
 | metrics sidecar | a `tai metrics` container in BOTH Deployments (see below) |
 | plugin-prefix PVC | optional persistent volume for marketplace installs (`pluginPrefix.enabled`, see [Plugin persistence](#plugin-persistence)) |
 | `postgresql` StatefulSet | optional quickstart Postgres (`postgres:16-alpine`) |
-| `redis` StatefulSet | optional quickstart Redis (`redis:7-alpine`) |
+| `redis` StatefulSet | optional quickstart Redis (`redis:7-alpine`) — state, worker bus, feature stores |
+| `memory-redis` StatefulSet | optional module-capable Redis (`redis:8`) for LangGraph flow memory ([Flow memory](#flow-memory-checkpoint--store)) |
 
 ## Recorded design decisions
 
@@ -207,11 +208,58 @@ automatically. To scale serve in-process, set `serve.workers > 1` **and**
 `serve.statelessHttp=true` (the stateful http transport refuses extra workers
 otherwise).
 
+### Flow memory (checkpoint + store)
+
+Two Redis roles, two Redis instances. The core `redis` holds state, the worker
+bus, and the feature stores — plain `redis:7-alpine`. LangGraph flow
+checkpointing and the flow store default to the `redis` provider, which needs the
+RediSearch + RedisJSON modules plain Redis lacks; a flow run against the core
+Redis dies on `unknown command 'FT._LIST'`. The **memory Redis** leg is a
+separate module-capable `redis:8` for flow memory only — never the core Redis's
+endpoint, volume, or bus, and never its password Secret.
+
+It is OFF by default. Set `memoryRedis.enabled=true` and the chart deploys the
+StatefulSet **and** wires `LLM_PROVIDER_CHECKPOINT_CONN_STRING` and
+`LLM_PROVIDER_STORE_CONN_STRING` to its service — redis-backed flow memory then
+works out of the box:
+
+```sh
+helm install tai charts/tai --set memoryRedis.enabled=true
+```
+
+**Auth.** Off by default (the Service is ClusterIP-only). Set
+`memoryRedis.auth.enabled=true` to require a password — the StatefulSet gets
+`--requirepass` (via a private config file, never argv) and the chart generates a
+random password in its **own** Secret (`<release>-memory-redis-auth`, kept across
+upgrades, never the core Redis's) and injects it into the derived conn strings via
+kubelet `$(MEMORY_REDIS_PASSWORD)` expansion, so the plaintext never lands in a
+rendered manifest:
+
+```sh
+helm install tai charts/tai --set memoryRedis.enabled=true --set memoryRedis.auth.enabled=true
+```
+
+Supply your own password with `memoryRedis.auth.existingSecret` (key
+`memory-redis-password`) instead of the generated one — required for GitOps, where
+`helm template | kubectl apply` cannot look up the live Secret. An `existingSecret`
+password must be **URL-safe** (letters/digits/URL-unreserved only, no `:/?#[]@%`):
+it is interpolated raw into the `redis://:<password>@host` URL without
+percent-encoding.
+
+To use an external module-capable Redis instead, set `memoryRedis.connString`
+(e.g. `redis://redis-agents.internal:6379`, or `redis://:password@host:6379` with
+auth) and leave `memoryRedis.enabled=false` — the conn strings point there and no
+StatefulSet is deployed. An explicit `connString` always wins verbatim over the
+derived quickstart address: you own the full URL, credentials included, and the
+`memoryRedis.auth` block is not consulted.
+
 ### Postgres-backed features
 
-Each is off by default; enabling one wires its `<PREFIX>PG_*` connection to the
-chart's Postgres endpoint (password via the DB Secret) and adds its schema to the
-`tai db migrate` init hook (`schemaInit`).
+Each is off by default; enabling any one wires the `TAI_DATABASE_DEFAULT_PG_*`
+connection — the "default" registry database that every postgres-backed component
+binds to — to the chart's Postgres endpoint (password via the DB Secret) and adds
+its schema to the `tai db migrate` init hook (`schemaInit`). The migrator (admin)
+identity is unset, so it falls back to the same runtime user/password.
 
 The schema-init hook's phase depends on who owns the database:
 
@@ -227,13 +275,16 @@ The schema-init hook's phase depends on who owns the database:
   chain lands. The StatefulSet is deliberately not made a hook itself — hook-owned
   workloads lose normal Helm lifecycle semantics.
 
-| Value | Feature | Env prefix |
-| --- | --- | --- |
-| `features.accessControl.enabled` | authn/authz policy store | `ACCESS_CONTROL_STORE_` |
-| `features.versioning.enabled` | presets + policy history | `VERSIONING_STORE_` |
-| `features.accounts.enabled` | accounts (tai42-accounts-postgres — **not in the minimal image**; add via a derived image or marketplace install first) | `TAI_ACCOUNTS_` (rendered vars: `TAI_ACCOUNTS_PG_HOST` …) |
-| `features.connectors.enabled` | OAuth connector store | `CONNECTOR_STORE_` |
-| `features.marketplace.enabled` | marketplace plugin store | `MARKETPLACE_STORE_` |
+All of these bind to the one `default` database (`TAI_DATABASE_DEFAULT_PG_*`);
+enabling any of them brings that connection up.
+
+| Value | Feature |
+| --- | --- |
+| `features.accessControl.enabled` | authn/authz policy store |
+| `features.versioning.enabled` | presets + policy history |
+| `features.accounts.enabled` | accounts (tai42-accounts-postgres — **not in the minimal image**; add via a derived image or marketplace install first) |
+| `features.connectors.enabled` | OAuth connector store |
+| `features.marketplace.enabled` | marketplace plugin store |
 
 ### Values
 
@@ -285,20 +336,27 @@ The schema-init hook's phase depends on who owns the database:
 | `redis.auth.enabled` | `false` | Redis AUTH. Password injected into every `*_REDIS_URL` via kubelet `$(REDIS_PASSWORD)` at container start (never in a rendered manifest). Quickstart: generated + kept if no `existingSecret`; external Redis: `redis.auth.existingSecret` **required**. An `existingSecret` password must be **URL-safe** (letters/digits/URL-unreserved only, no `:/?#[]@%`) — it is interpolated raw into `redis://` URLs without percent-encoding |
 | `redis.busNamespace` | `tai` | `TAI_BUS_NAMESPACE` (isolate co-tenant stacks) |
 | `redis.securityContext.runAsUser` | `999` | redis image uid (own context) |
+| `memoryRedis.enabled` | `false` | deploy the module-capable `redis:8` flow-memory StatefulSet and wire the flow checkpoint/store conn strings to it ([Flow memory](#flow-memory-checkpoint--store)) |
+| `memoryRedis.connString` | `""` (derive) | flow checkpoint/store conn string. Empty = derive from the quickstart leg's service; set to point at an external module-capable Redis (then leave `enabled=false`, no StatefulSet). Wins **verbatim** over the derived address (you own the full URL, auth included; the `memoryRedis.auth` block is not consulted) |
+| `memoryRedis.auth.enabled` | `false` | memory Redis AUTH (quickstart leg only). `--requirepass` on the StatefulSet; password injected into the derived conn strings via kubelet `$(MEMORY_REDIS_PASSWORD)` (never in a rendered manifest). Uses its **own** generated Secret — never the core Redis's; supply `memoryRedis.auth.existingSecret` (key `memory-redis-password`, must be **URL-safe**) for GitOps |
+| `memoryRedis.port` | `6379` | memory Redis port |
+| `memoryRedis.securityContext.runAsUser` | `999` | redis image uid (own context) |
 | `podSecurityContext` / `securityContext` | restricted-PSA | app pod/container contexts |
 | `tests.image.repository` | `curlimages/curl` | helm-test image (the app image has no curl) |
 
 ## Secrets and credentials
 
 No working credential ships in `values.yaml`. For the **quickstart** Postgres —
-and the quickstart Redis when `redis.auth.enabled` — the chart **generates a
-random password at install** (a Secret annotated `helm.sh/resource-policy: keep`,
-with a `lookup` so upgrades do not rotate it), and that one Secret feeds both the
-DB StatefulSet and the app env so they cannot drift. For an **external** Postgres
-(with a PG feature) or an **external** Redis with auth, the chart will not
-generate a password for infrastructure it does not own — supply
-`postgresql.auth.existingSecret` / `redis.auth.existingSecret` (render fails
-otherwise). Supply LLM keys, Langfuse keys, and external DB URLs via `config.env`
+the quickstart Redis when `redis.auth.enabled`, and the quickstart memory Redis
+when `memoryRedis.auth.enabled` — the chart **generates a random password at
+install** (a Secret annotated `helm.sh/resource-policy: keep`, with a `lookup` so
+upgrades do not rotate it), and each such Secret feeds both its StatefulSet and
+the app env so they cannot drift. The two Redis legs keep **separate** Secrets —
+never shared. For an **external** Postgres (with a PG feature) or an **external**
+Redis with auth, the chart will not generate a password for infrastructure it does
+not own — supply `postgresql.auth.existingSecret` / `redis.auth.existingSecret`
+(render fails otherwise); an external memory Redis carries its credentials in
+`memoryRedis.connString`. Supply LLM keys, Langfuse keys, and external DB URLs via `config.env`
 or, better, `config.existingSecret`. Every credential-bearing field in this chart
 defaults to empty/placeholder — real secrets come via `existingSecret`.
 

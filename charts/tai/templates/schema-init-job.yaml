@@ -28,7 +28,7 @@ Because a pre-hook runs BEFORE every normal release resource, this pod must not
 reference ANY of them — no shared config mounts, no env Secret, no ConfigMap, no
 release ServiceAccount (each would leave a fresh external-DB install stuck in
 ContainerCreating waiting on objects Helm has not created yet). `tai db migrate`
-needs none of that: it reads only the TAI_DB_* schema-admin env set below (the
+needs none of that: it reads only the default database's env set below (the
 CLI's dotenv/config bootstrap no-ops when no .env or TAI_CONFIG_MODE is present),
 so the pod mounts nothing and runs under the namespace default ServiceAccount.
 The db Secret it does reference is safe in both phases: the external shape
@@ -91,15 +91,15 @@ spec:
             - db
             - migrate
           env:
-            - name: TAI_DB_PG_HOST
+            - name: TAI_DATABASE_DEFAULT_PG_HOST
               value: {{ include "tai.postgres.host" . | quote }}
-            - name: TAI_DB_PG_PORT
+            - name: TAI_DATABASE_DEFAULT_PG_PORT
               value: {{ .Values.postgresql.port | quote }}
-            - name: TAI_DB_PG_DB
+            - name: TAI_DATABASE_DEFAULT_PG_DB
               value: {{ .Values.postgresql.database | quote }}
-            - name: TAI_DB_PG_USER
+            - name: TAI_DATABASE_DEFAULT_PG_USER
               value: {{ .Values.postgresql.username | quote }}
-            - name: TAI_DB_PG_PASSWORD
+            - name: TAI_DATABASE_DEFAULT_PG_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "tai.dbSecretName" . | quote }}

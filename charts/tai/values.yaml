@@ -372,15 +372,15 @@ pluginPrefix:
 # -----------------------------------------------------------------------------
 # Feature stores
 # -----------------------------------------------------------------------------
-# Each PG-backed feature is OFF by default and, when enabled, is wired to the
-# chart's Postgres endpoint (host/port/db/user + the generated password) and
-# adds its schema to the `tai db migrate` init hook. The rate limiter, interactions,
-# tool-runs, hooks and access-control Redis URLs are wired to the chart's Redis
-# endpoint unconditionally (inert until used) so those features work out of the
-# box — the connector store's Redis cache URL is wired unconditionally alongside
-# them. Connectors gates on its store like every other DB feature: a supplied
-# CONNECTOR_STORE_PG_* password is the on signal, so that Postgres half is wired
-# only when features.connectors is on. The Redis URL alone opens no store at boot.
+# Each PG-backed feature is OFF by default. Enabling any one wires the "default"
+# registry database (TAI_DATABASE_DEFAULT_PG_*, host/port/db/user + the generated
+# password) that every postgres-backed component binds to, and adds its schema to
+# the `tai db migrate` init hook. The rate limiter, interactions, tool-runs, hooks
+# and access-control Redis URLs are wired to the chart's Redis endpoint
+# unconditionally (inert until used) so those features work out of the box — the
+# connector store's Redis cache URL is wired unconditionally alongside them. A
+# component's store is configured iff the default database is configured; the env
+# alone opens no store at boot until a loaded feature uses it.
 features:
   # Access control (authn/authz). OFF by default so the quickstart boots with no
   # identity provider or key seeding. Turning it on requires naming an identity
@@ -528,6 +528,80 @@ redis:
   # by 999 and group-writable, so the process can write its data regardless of
   # the image's own group. Same rationale as Postgres: run under the image uid
   # with an fsGroup so /data is writable under restricted PSA.
+  securityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# -----------------------------------------------------------------------------
+# Memory Redis endpoint (module-capable, for LangGraph flow checkpoint + store)
+# -----------------------------------------------------------------------------
+# The core `redis:` above is plain redis (state, worker bus, feature stores).
+# LangGraph flow checkpointing and the flow store default to the `redis` provider,
+# which needs the RediSearch + RedisJSON modules the plain core redis lacks — a
+# flow run against it dies on `unknown command 'FT._LIST'`. This is a SEPARATE
+# module-capable redis:8 for flow memory ONLY: never the core redis's endpoint,
+# volume, or worker bus. OFF by default.
+memoryRedis:
+  # true  = deploy the module-capable quickstart StatefulSet below AND wire the
+  #         flow checkpoint/store conn strings to it automatically.
+  # false = no StatefulSet; the conn strings are wired only if connString is set
+  #         (an external module-capable redis).
+  enabled: false
+
+  port: 6379
+
+  # Flow checkpoint/store connection string. Empty = derive from this leg's own
+  # ClusterIP service when enabled. Set to point checkpoint + store at an
+  # external module-capable redis instead (then leave enabled=false, no
+  # StatefulSet is deployed). Shape: redis://host:6379 (with auth,
+  # redis://:password@host:6379 — you own the full URL, this leg's auth block is
+  # not consulted). Wins verbatim over the derived address.
+  connString: ""
+
+  auth:
+    # Redis AUTH for the quickstart memory-redis leg. Off by default (the Service
+    # is ClusterIP-only). Governs the QUICKSTART leg only: an explicit connString
+    # (external memory redis) carries its own credentials and ignores this block.
+    # The derived checkpoint/store conn strings inject the password at container
+    # start via kubelet $(MEMORY_REDIS_PASSWORD) expansion, so it never appears in
+    # a rendered manifest outside the Secret.
+    #
+    # Password source (no working password default lives here) — a SEPARATE Secret
+    # from the core redis leg, never shared:
+    #   - existingSecret set -> that Secret (key existingSecretKey) is used;
+    #   - no existingSecret  -> the chart GENERATES a random password at install
+    #     and keeps it across upgrades (Secret annotated
+    #     helm.sh/resource-policy: keep + a lookup so upgrades do not rotate it),
+    #     feeding both the memory-redis StatefulSet and the app env.
+    # GitOps caveat: `helm template | kubectl apply` cannot lookup the live
+    # Secret, so a generated password is re-minted every apply — supply
+    # existingSecret for GitOps.
+    # An existingSecret password MUST be URL-safe (letters, digits, and URL
+    # unreserved chars only — no `:/?#[]@%` etc.): the consumers are URL-only, so
+    # the password is interpolated RAW into `redis://:<password>@host` URLs with
+    # no percent-encoding. Chart-generated passwords are alphanumeric and safe.
+    enabled: false
+    existingSecret: ""
+    existingSecretKey: memory-redis-password
+
+  # Quickstart StatefulSet settings (used when enabled=true).
+  image:
+    repository: redis
+    tag: "8"
+    pullPolicy: IfNotPresent
+  # Same rationale as the core redis leg: run under the redis image's own uid 999
+  # with a matching fsGroup so /data is writable under restricted PSA.
   securityContext:
     runAsUser: 999
     runAsGroup: 999
