@@ -16,12 +16,12 @@ kubeVersion: ">=1.29.0-0"
 
 # Chart semver. The release workflow stamps this from the release tag when it
 # packages the chart; the value here is what a local `helm package` produces.
-version: 0.5.14 # x-release-please-version
+version: 0.6.0 # x-release-please-version
 
 # The default application image version this chart targets. Overridable with
 # image.tag; when image.tag is empty the chart uses this value. The release
 # workflow stamps it from the same tag that publishes the image.
-appVersion: "0.5.14" # x-release-please-version
+appVersion: "0.6.0" # x-release-please-version
 
 home: https://tai42.ai
 sources:
