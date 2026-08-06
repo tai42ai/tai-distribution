@@ -2,7 +2,7 @@
 #
 # Builds the image from local checkouts (SOURCE=local) instead of
 # pulling the released image, so a contributor can run the full stack against
-# uncommitted local changes. Every app process (db-init / serve / backend /
+# uncommitted local changes. Every app process (db-migrate / serve / backend /
 # metrics) shares one build definition, so they can never build from different
 # source.
 #
@@ -33,7 +33,7 @@ x-tai-build: &tai-build
     SOURCE: local
 
 services:
-  db-init:
+  db-migrate:
     build: *tai-build
   serve:
     build: *tai-build

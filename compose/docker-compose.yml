@@ -113,9 +113,9 @@ x-tai-app-env: &tai-app-env
   # Every store targets the same postgres/db/user; the one POSTGRES_PASSWORD is
   # required (no working default) so an unchanged deployment cannot ship a shared
   # credential.
-  # TAI_DB_* is the schema-admin connection: db-init applies the DDL through it,
-  # and `tai doctor`'s postgres/schema probes read it — so it lives in the shared
-  # env, pointed at the same database as the runtime stores.
+  # TAI_DB_* is the schema-admin connection: db-migrate runs the migrations
+  # through it, and `tai doctor`'s postgres/schema probes read it — so it lives in
+  # the shared env, pointed at the same database as the runtime stores.
   TAI_DB_PG_HOST: postgres
   TAI_DB_PG_PORT: "5432"
   TAI_DB_PG_DB: "${POSTGRES_DB:-tai}"
@@ -171,15 +171,16 @@ x-tai-app-env: &tai-app-env
   STORAGE_S3_REGION: us-east-1
 
 services:
-  # ---- db-init: one-shot schema apply --------------------------------------
-  # Applies the app's bundled DDL (idempotent, IF NOT EXISTS throughout) through
-  # the TAI_DB_* schema-admin connection before serve/backend start — their
-  # startup handlers read framework tables and fail loudly on a bare database.
-  # Exits 0 when the schema is in place; serve/backend gate on that completion.
-  db-init:
+  # ---- db-migrate: one-shot migration runner -------------------------------
+  # Runs the app's pending migrations (ordered chain, each applied once and
+  # recorded in tai_schema_history) through the TAI_DB_* schema-admin connection
+  # before serve/backend start — their boot gate refuses a database with pending
+  # migrations and fails loudly. Exits 0 when the schema is up to date;
+  # serve/backend gate on that completion.
+  db-migrate:
     image: *tai-image
     logging: *default-logging
-    command: ["db", "apply"]
+    command: ["db", "migrate"]
     environment: *tai-app-env
     depends_on:
       postgres:
@@ -207,7 +208,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      db-init:
+      db-migrate:
         condition: service_completed_successfully
     # Explicit per-service healthcheck (probes serve's own :8000/health via the
     # Python stdlib — the image ships no curl/wget). Generous start_period:
@@ -246,7 +247,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      db-init:
+      db-migrate:
         condition: service_completed_successfully
     # The worker has no HTTP listener, so the baked serve probe (:8000/health)
     # would leave it permanently unhealthy. Probe the bus redis instead — the

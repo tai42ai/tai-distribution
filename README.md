@@ -106,9 +106,17 @@ Moving a deployment to a new release is three steps: pull the new image tag,
 start it, then bring the marketplace-installed plugins up to it. Compose shown;
 the same three steps apply to any runner:
 
+**Snapshot the database first.** A release may ship new migrations, and the
+chain rolls forward only — there are no down-migrations. Take a snapshot before
+upgrading (a managed Postgres point-in-time-recovery restore point, or a
+`pg_dump` of the compose volume) so a bad upgrade is recoverable by restoring
+the snapshot and re-running the older image, not by reversing the schema.
+
 ```sh
 cd compose
-# 1. Pull the new tag and recreate the containers.
+# 1. Pull the new tag and recreate the containers. `up -d` runs the one-shot
+#    db-migrate service first: it applies any pending migrations (recorded in
+#    tai_schema_history) before serve/backend start, which gate on it.
 TAI_VERSION=X.Y.Z docker compose pull
 TAI_VERSION=X.Y.Z docker compose up -d
 
