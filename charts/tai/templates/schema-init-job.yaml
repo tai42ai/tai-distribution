@@ -1,9 +1,10 @@
 {{- if include "tai.schemaInit.enabled" . }}
 {{- /*
-Applies the Postgres schema for the enabled PG-backed features via `tai db apply`
-(idempotent IF NOT EXISTS DDL). An init container waits for Postgres to accept
-connections first (a bounded 180s poll), since Helm does not guarantee the DB is
-Ready when the hook runs.
+Runs the pending Postgres migrations for the enabled PG-backed features via
+`tai db migrate` (ordered migration chain, each applied once and recorded in
+tai_schema_history). An init container waits for Postgres to accept connections
+first (a bounded 180s poll), since Helm does not guarantee the DB is Ready when
+the hook runs.
 
 The hook PHASE depends on who owns the database:
 
@@ -17,15 +18,16 @@ The hook PHASE depends on who owns the database:
     pre-hooks — a pre-hook would wait on a DB that cannot exist yet. With the
     post-hook, the serve/backend pods may start before the schema exists and
     self-heal via crash-restart/startupProbe until it lands. On upgrade the
-    migration lands after the pods roll — acceptable because the DDL is additive
-    IF NOT EXISTS and releases ship schema-compatible. The StatefulSet is
+    migration lands after the pods roll — acceptable because releases ship
+    backward-compatible (new code tolerates the pre-migration schema until the
+    chain lands, and the boot gate self-heals the window). The StatefulSet is
     deliberately NOT promoted to a hook itself: hook-owned workloads lose normal
     Helm lifecycle semantics (upgrades, rollbacks, uninstall).
 
 Because a pre-hook runs BEFORE every normal release resource, this pod must not
 reference ANY of them — no shared config mounts, no env Secret, no ConfigMap, no
 release ServiceAccount (each would leave a fresh external-DB install stuck in
-ContainerCreating waiting on objects Helm has not created yet). `tai db apply`
+ContainerCreating waiting on objects Helm has not created yet). `tai db migrate`
 needs none of that: it reads only the TAI_DB_* schema-admin env set below (the
 CLI's dotenv/config bootstrap no-ops when no .env or TAI_CONFIG_MODE is present),
 so the pod mounts nothing and runs under the namespace default ServiceAccount.
@@ -87,7 +89,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           args:
             - db
-            - apply
+            - migrate
           env:
             - name: TAI_DB_PG_HOST
               value: {{ include "tai.postgres.host" . | quote }}

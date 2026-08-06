@@ -211,21 +211,21 @@ otherwise).
 
 Each is off by default; enabling one wires its `<PREFIX>PG_*` connection to the
 chart's Postgres endpoint (password via the DB Secret) and adds its schema to the
-`tai db apply` init hook (`schemaInit`).
+`tai db migrate` init hook (`schemaInit`).
 
 The schema-init hook's phase depends on who owns the database:
 
 - **External Postgres** (`postgresql.enabled=false`): `pre-install,pre-upgrade`.
-  The DB pre-exists the release, so the schema (and each upgrade's migration)
-  lands **before** any serve/backend pod starts — strict ordering.
+  The DB pre-exists the release, so the pending migrations land **before** any
+  serve/backend pod starts — strict ordering.
 - **Quickstart Postgres** (`postgresql.enabled=true`): `post-install,post-upgrade`.
   The quickstart StatefulSet is a normal release resource, so it cannot exist
-  during a pre-hook. The serve/backend pods may start before the schema exists
-  and self-heal via crash-restart/startupProbe until it lands; on upgrade the
-  migration lands after the pods roll. This is acceptable because the DDL is
-  additive `IF NOT EXISTS` and releases ship schema-compatible. The StatefulSet
-  is deliberately not made a hook itself — hook-owned workloads lose normal Helm
-  lifecycle semantics.
+  during a pre-hook. The serve/backend pods may start before the migrations run
+  and self-heal via crash-restart/startupProbe until they land; on upgrade the
+  migrations land after the pods roll. This is acceptable because releases ship
+  backward-compatible — new code tolerates the pre-migration schema until the
+  chain lands. The StatefulSet is deliberately not made a hook itself — hook-owned
+  workloads lose normal Helm lifecycle semantics.
 
 | Value | Feature | Env prefix |
 | --- | --- | --- |
@@ -275,7 +275,7 @@ The schema-init hook's phase depends on who owns the database:
 | `pluginPrefix.existingClaim` | `""` | use an existing PVC instead of the chart-created one |
 | `pluginPrefix.accessMode` / `.size` / `.storageClass` | `ReadWriteMany` / `1Gi` / `""` | chart-created PVC spec (`ReadWriteOnce` only when a single node holds every mounting pod) |
 | `features.*.enabled` | `false` | Postgres-backed feature toggles (table above) |
-| `schemaInit.enabled` | `auto` | `tai db apply` hook: `auto`/`true`/`false`. Phase: pre-install/upgrade (external Postgres) or post-install/upgrade (quickstart) |
+| `schemaInit.enabled` | `auto` | `tai db migrate` hook: `auto`/`true`/`false`. Phase: pre-install/upgrade (external Postgres) or post-install/upgrade (quickstart) |
 | `postgresql.enabled` | `true` | deploy the quickstart Postgres StatefulSet |
 | `postgresql.host` / `.port` / `.database` / `.username` | — / 5432 / tai / tai | external Postgres connection |
 | `postgresql.auth.existingSecret` | `""` | Secret (key `postgres-password`). Quickstart: else a random password is generated at install and kept. External Postgres (`enabled=false`) with a PG feature on: **required** (render fails otherwise) |

@@ -374,7 +374,7 @@ pluginPrefix:
 # -----------------------------------------------------------------------------
 # Each PG-backed feature is OFF by default and, when enabled, is wired to the
 # chart's Postgres endpoint (host/port/db/user + the generated password) and
-# adds its schema to the `tai db apply` init hook. The rate limiter, interactions,
+# adds its schema to the `tai db migrate` init hook. The rate limiter, interactions,
 # tool-runs, hooks and access-control Redis URLs are wired to the chart's Redis
 # endpoint unconditionally (inert until used) so those features work out of the
 # box — the connector store's Redis cache URL is wired unconditionally alongside
@@ -405,12 +405,13 @@ features:
     enabled: false
 
 # -----------------------------------------------------------------------------
-# Schema init (tai db apply)
+# Schema init (tai db migrate)
 # -----------------------------------------------------------------------------
-# A post-install/post-upgrade Helm hook Job that applies the Postgres schema
-# (`tai db apply`, idempotent IF NOT EXISTS DDL) for the enabled PG-backed
-# features. "auto" enables it whenever any PG feature above is on; set true/false
-# to force it. It waits for the DB to accept connections, then applies.
+# A post-install/post-upgrade Helm hook Job that runs the pending Postgres
+# migrations (`tai db migrate`, ordered chain recorded in tai_schema_history) for
+# the enabled PG-backed features. "auto" enables it whenever any PG feature above
+# is on; set true/false to force it. It waits for the DB to accept connections,
+# then migrates.
 schemaInit:
   enabled: auto
   backoffLimit: 6
