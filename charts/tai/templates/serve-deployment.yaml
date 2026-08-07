@@ -5,6 +5,10 @@ metadata:
   labels:
     {{- include "tai.labels" . | nindent 4 }}
     app.kubernetes.io/component: serve
+  {{- with (include "tai.reloaderAnnotations" . | trim) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   {{- if not .Values.serve.autoscaling.enabled }}
   replicas: {{ .Values.serve.replicaCount }}
@@ -30,6 +34,9 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- /* Grace ≥ the serving surface's drain budget so a recycle/rollout
+             SIGTERM lets uvicorn drain in-flight requests before SIGKILL. */}}
+      terminationGracePeriodSeconds: {{ .Values.serve.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

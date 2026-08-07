@@ -201,6 +201,21 @@ Whether the schema-init hook should run.
 {{- end -}}
 
 {{/*
+Stakater Reloader annotations for the serve / backend Deployments. Emitted onto
+the Deployment metadata (Reloader reads them there, not the pod template) so an
+out-of-band change to the env Secret or manifest ConfigMap — e.g. a k8s-mode
+profile apply writing them via the API — rolls the Deployment. Scoped to exactly
+the chart's two config objects, never `auto`. OFF by default; Reloader must be
+installed cluster-wide for these to have any effect.
+*/}}
+{{- define "tai.reloaderAnnotations" -}}
+{{- if .Values.reloader.enabled }}
+secret.reloader.stakater.com/reload: {{ include "tai.envSecretName" . | quote }}
+configmap.reloader.stakater.com/reload: {{ include "tai.manifestConfigMapName" . | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
 App environment shared by serve, backend, metrics and the schema-init hook.
 Emits a YAML list of env entries. Pass the root context.
 */}}
@@ -221,6 +236,10 @@ Emits a YAML list of env entries. Pass the root context.
 - name: TAI_MANIFEST_PATH
   value: "/app/manifest.yml"
 {{- end }}
+{{/* Supervision shape marker: pins recycle shape detection to k8s so a
+     recycle-class profile diff resolves the k8s refusal list, never bare. */}}
+- name: TAI_SUPERVISED
+  value: "k8s"
 {{/* Redis AUTH password. Declared FIRST so kubelet can interpolate it into the
      $(REDIS_PASSWORD) placeholder every *_REDIS_URL below carries. No redis
      consumer exposes a separate password env — they are all URL-only — so the

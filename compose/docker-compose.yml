@@ -48,6 +48,11 @@ x-tai-image: &tai-image "docker.io/tai42/tai:${TAI_VERSION:-latest}"
 # POSTGRES_PASSWORD is the "default" database's password, so a deployment has
 # exactly one DB credential to set.
 x-tai-app-env: &tai-app-env
+  # --- supervision shape marker ------------------------------------------------
+  # Pins recycle shape detection to compose so a recycle-class profile diff
+  # resolves the compose refusal list, never bare. Set here (not per service) so
+  # every app process reports the same shape.
+  TAI_SUPERVISED: compose
   # --- config provider (file mode: reads /app/manifest.yml + /app/.env) -------
   TAI_CONFIG_MODE: file
   TAI_CONFIG_DIR_PATH: /app
@@ -167,6 +172,9 @@ services:
     image: *tai-image
     logging: *default-logging
     restart: unless-stopped
+    # Grace before SIGKILL on stop/recycle — >= the serving surface's in-flight
+    # drain budget so uvicorn can finish live requests before the kill.
+    stop_grace_period: 300s
     # Explicit multi-worker: serve's own default is 1 worker (silently
     # single-worker without this), and workers>1 on the default stateful http
     # transport is refused at boot unless --stateless-http is set. Bind 0.0.0.0
@@ -206,6 +214,10 @@ services:
     image: *tai-image
     logging: *default-logging
     restart: unless-stopped
+    # Grace before SIGKILL on stop/recycle — >= the worker's in-flight job drain
+    # budget (arq job_completion_wait / celery warm-drain) so the current job
+    # finishes before the kill.
+    stop_grace_period: 300s
     command: ["backend", "worker"]
     environment: *tai-app-env
     volumes:

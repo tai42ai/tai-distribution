@@ -83,6 +83,9 @@ the release ServiceAccount. Read it before choosing this mode:
 
 - `get` is pinned by name to exactly two objects — the chart's env Secret and its
   manifest ConfigMap.
+- `patch`/`update` are pinned by name to the **env Secret only** — the write path
+  the config provider uses to persist env (a profile apply / recycle env write).
+  The manifest ConfigMap stays read-only here.
 - `list` and `watch` **cannot** be pinned by name: Kubernetes RBAC has no name
   selector for collection verbs. So those two verbs are granted namespace-wide
   on **all** Secrets and **all** ConfigMaps in the release namespace.
@@ -105,6 +108,39 @@ provider or key seeding. **Before exposing the server**, enable access control a
 name an identity provider (e.g. `tai42_identity_redis.redis_api_key_provider`) in
 `config.manifest` `lifecycle_modules`. The `/health` and `/ready` probes are served
 public by default (no pin needed). See the [deploy guide](https://tai42.ai/guides/deploy).
+
+### Recycle-ready: shape marker, backend readiness sentinel, grace, Reloader
+
+Process-identity settings (broker/bus URLs, config mode, worker counts) cannot
+change in-process; a profile apply that touches them runs an orchestrated rolling
+**recycle** — the process finishes its current work, exits cleanly, and the
+Deployment respawns it onto the new env. The chart carries what makes that safe on
+Kubernetes:
+
+- **Shape marker.** Every app container gets `TAI_SUPERVISED=k8s` (via the shared
+  env helper), so the platform detects the k8s supervision shape deterministically
+  and resolves the k8s refusal list — a recycle-class diff is never mistaken for
+  an unsupervised (bare) host.
+- **Backend readiness sentinel.** The backend worker has no HTTP listener, so its
+  readiness is an **exec probe on a boot-ready sentinel file** the app writes when
+  its boot latch flips (and removes at shutdown). `backend.readinessProbe.sentinelPath`
+  is BOTH the `TAI_READY_SENTINEL_PATH` env (where the app writes it) and the
+  probe's test path — one key, no drift. It MUST stay container-local/ephemeral
+  (the default `/tmp/tai-ready`): a crash-restart must start **unready** until the
+  fresh process re-writes it, so the rolling recycle waits for a genuinely ready
+  replacement. serve keeps its HTTP `/ready` probe unchanged.
+- **Termination grace.** `serve.terminationGracePeriodSeconds` and
+  `backend.terminationGracePeriodSeconds` default to `300` — `>=` the worker's
+  in-flight drain budget (arq `job_completion_wait` / celery warm-drain) — so a
+  recycle SIGTERM lets in-flight work finish before SIGKILL.
+- **Env-Secret RBAC.** In `config.mode=k8s` the config Role grants `patch`/`update`
+  on the env Secret (see above) so the recycle env write is not a 403.
+- **Reloader (optional, OFF).** `reloader.enabled=true` annotates the serve and
+  backend Deployments for [Stakater Reloader](https://github.com/stakater/Reloader)
+  so an **out-of-band** change to the env Secret / manifest ConfigMap (e.g. a
+  k8s-mode profile apply writing them via the API) rolls the pods. Scoped to
+  exactly the chart's two config objects, never a blanket `auto`. Requires the
+  Reloader controller installed cluster-wide (not bundled).
 
 ## Plugin persistence
 
@@ -303,12 +339,15 @@ enabling any of them brings that connection up.
 | `serve.startupProbe.failureThreshold` | `60` | generous startup budget for manifest-driven dynamic imports |
 | `serve.autoscaling.enabled` | `false` | HPA for serve |
 | `serve.pdb.enabled` | `false` | PodDisruptionBudget for serve |
+| `serve.terminationGracePeriodSeconds` | `300` | grace before SIGKILL on recycle/rollout (`>=` the serving drain budget) |
 | `serve.resources` | requests 250m/512Mi | serve resources |
 | `backend.enabled` | `true` | run the backend worker |
 | `backend.type` | `arq` | backend provider: `arq` (only backend in the minimal image) or `celery` (needs the plugin added first — derived image or marketplace install; this block only wires the connection) |
 | `backend.arq.redisUrl` | `""` (chart redis) | arq Redis URL |
 | `backend.celery.brokerUrl` | placeholder | celery broker (bring your own) |
 | `backend.livenessProbe.exec.command` | `/proc/1/cmdline` check | worker liveness (never HTTP) |
+| `backend.readinessProbe.sentinelPath` | `/tmp/tai-ready` | boot-ready sentinel: BOTH `TAI_READY_SENTINEL_PATH` (where the app writes it) and the readiness exec-probe path — must be container-local/ephemeral |
+| `backend.terminationGracePeriodSeconds` | `300` | grace before SIGKILL on recycle/rollout (`>=` the arq/celery in-flight drain budget) |
 | `metrics.enabled` | `true` | run the metrics sidecar |
 | `metrics.port` | `8012` | metrics sidecar port |
 | `metrics.multiprocDir` | `/var/run/tai/prometheus` | shared multiproc dir (absolute) |
@@ -321,6 +360,7 @@ enabling any of them brings that connection up.
 | `config.manifest` | bare manifest | manifest.yml content (do not set `backend_module` — the chart injects it) |
 | `config.existingSecret` | `""` | use an existing env Secret |
 | `config.existingConfigMap` | `""` | use an existing manifest ConfigMap; **you** must set `backend_module` in it to match `backend.type` (the chart cannot inject into a manifest it does not render) |
+| `reloader.enabled` | `false` | annotate serve/backend for Stakater Reloader (roll on out-of-band env Secret / manifest ConfigMap change); scoped to the two config objects; needs the Reloader controller installed ([Recycle-ready](#recycle-ready-shape-marker-backend-readiness-sentinel-grace-reloader)) |
 | `pluginPrefix.enabled` | `false` | mount a persistent plugin prefix (`TAI_PLUGINS_PREFIX`) into serve + backend so marketplace installs survive pod recreation ([Plugin persistence](#plugin-persistence)) |
 | `pluginPrefix.path` | `/var/lib/tai/plugins` | mount path and `TAI_PLUGINS_PREFIX` value |
 | `pluginPrefix.existingClaim` | `""` | use an existing PVC instead of the chart-created one |

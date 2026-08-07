@@ -124,6 +124,20 @@ jobs:
               docker compose -f "${f}" --profile "${p}" config -q
             done < <(docker compose -f "${f}" config --profiles)
           done
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      # Compose refusal-list parity: assert the x-tai-app-env anchor keys equal
+      # the product's compose refusal list. Installs tai42-skeleton at the version
+      # the shipped image pins (docker/pypi-requirements.txt) so the test can import
+      # config.recycle_policy — no image extras needed, the import is core only.
+      - name: compose env-anchor refusal parity
+        run: |
+          set -euo pipefail
+          ver="$(grep -oP '^tai42-skeleton(\[[^]]*\])?==\K.*' docker/pypi-requirements.txt)"
+          test -n "${ver}" || { echo "could not read tai42-skeleton pin from docker/pypi-requirements.txt" >&2; exit 1; }
+          python -m pip install --disable-pip-version-check "tai42-skeleton==${ver}" pyyaml
+          python compose/tests/parity_app_env.py
 
   # Detect whether the Helm chart is present; the helm jobs are gated on this.
   # When charts/tai is absent they are skipped rather than failing, so a
@@ -172,6 +186,22 @@ jobs:
             echo "== helm template -f ${vf} =="
             helm template tai charts/tai -f "${vf}" >/dev/null
           done
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      # k8s tier-2 refusal parity: render the FULL pinned pod env of both app
+      # deployments (all features on) and assert its recycle-pinned subset equals
+      # the product's k8s refusal list. Installs tai42-skeleton at the version the
+      # shipped image pins (docker/pypi-requirements.txt) so the test can import
+      # config.recycle_policy — no image extras needed; needs only helm (set up
+      # above), not a cluster.
+      - name: k8s pod-env refusal parity
+        run: |
+          set -euo pipefail
+          ver="$(grep -oP '^tai42-skeleton(\[[^]]*\])?==\K.*' docker/pypi-requirements.txt)"
+          test -n "${ver}" || { echo "could not read tai42-skeleton pin from docker/pypi-requirements.txt" >&2; exit 1; }
+          python -m pip install --disable-pip-version-check "tai42-skeleton==${ver}" pyyaml
+          python charts/tai/tests/parity_pod_env.py
       - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
       - name: Install kind
         run: |

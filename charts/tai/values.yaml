@@ -109,6 +109,11 @@ serve:
     timeoutSeconds: 3
     failureThreshold: 3
 
+  # Grace before SIGKILL on pod termination (recycle self-exit or a rollout).
+  # Must be >= the serving surface's in-flight drain budget so uvicorn can finish
+  # live requests; the default matches the backend drain default.
+  terminationGracePeriodSeconds: 300
+
   # Extra command-line args appended to `tai serve`.
   extraArgs: []
   nodeSelector: {}
@@ -195,6 +200,25 @@ backend:
           import sys
           cmd = open("/proc/1/cmdline", "rb").read().decode("utf-8", "ignore")
           sys.exit(0 if "backend" in cmd else 1)
+
+  # Readiness: the worker has no HTTP listener, so readiness is a file-exists test
+  # on the boot-ready sentinel the app writes when its boot latch flips (and
+  # removes at shutdown). `sentinelPath` is BOTH the TAI_READY_SENTINEL_PATH env
+  # (where the app writes it) and the probe's test path — one key feeds both. It
+  # MUST be container-local/ephemeral (never a persistent mount): a crash-restart
+  # must start unready until the fresh process re-writes it.
+  readinessProbe:
+    enabled: true
+    sentinelPath: /tmp/tai-ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Grace before SIGKILL on pod termination (recycle self-exit or a rollout).
+  # Must be >= the worker's in-flight job drain budget (arq job_completion_wait /
+  # celery warm-drain, default 300s) so the current job finishes before SIGKILL.
+  terminationGracePeriodSeconds: 300
 
   # Extra args appended to `tai backend worker` (e.g. a celery scheduler runs as
   # its own Deployment; this chart deploys the worker only).
@@ -329,6 +353,18 @@ config:
   #                        celery -> tai42_backend_celery).
   existingSecret: ""
   existingConfigMap: ""
+
+# -----------------------------------------------------------------------------
+# Stakater Reloader (optional)
+# -----------------------------------------------------------------------------
+# When enabled, the serve and backend Deployments carry Reloader annotations so
+# an out-of-band change to the env Secret or manifest ConfigMap (e.g. a k8s-mode
+# profile apply writing them via the Kubernetes API) rolls the pods onto the new
+# config. Scoped to exactly the chart's two config objects — never a blanket
+# `auto`. OFF by default; requires the Stakater Reloader controller installed
+# cluster-wide (not bundled) to have any effect.
+reloader:
+  enabled: false
 
 # -----------------------------------------------------------------------------
 # Plugin persistence (marketplace installs that survive pod recreation)
