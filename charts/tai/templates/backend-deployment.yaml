@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "tai.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
+  {{- with (include "tai.reloaderAnnotations" . | trim) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.backend.replicaCount }}
   selector:
@@ -29,6 +33,9 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- /* Grace ≥ the worker's in-flight drain budget so a recycle/rollout
+             SIGTERM lets the current job finish before SIGKILL. */}}
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -74,6 +81,12 @@ spec:
             {{- include "tai.pluginPrefixEnv" . | nindent 12 }}
             {{- include "tai.backendEnv" . | nindent 12 }}
             {{- include "tai.multiprocEnv" . | nindent 12 }}
+            {{- if .Values.backend.readinessProbe.enabled }}
+            {{- /* Same value drives the sentinel the app writes on boot-ready
+                   and the probe path below — one key, never two to keep in sync. */}}
+            - name: TAI_READY_SENTINEL_PATH
+              value: {{ .Values.backend.readinessProbe.sentinelPath | quote }}
+            {{- end }}
           {{- if .Values.backend.livenessProbe.enabled }}
           livenessProbe:
             exec:
@@ -83,6 +96,24 @@ spec:
             periodSeconds: {{ .Values.backend.livenessProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.backend.livenessProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.backend.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.backend.readinessProbe.enabled }}
+          {{- /* The worker has no HTTP listener, so readiness is a file-exists
+                 test on the boot-ready sentinel the app writes (and removes at
+                 shutdown). The path is ephemeral/container-local — a crash-restart
+                 starts unready until the fresh process re-writes it. */}}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os, sys
+                  sys.exit(0 if os.path.exists({{ .Values.backend.readinessProbe.sentinelPath | quote }}) else 1)
+            initialDelaySeconds: {{ .Values.backend.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.readinessProbe.failureThreshold }}
           {{- end }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}

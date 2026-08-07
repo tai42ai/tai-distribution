@@ -136,6 +136,43 @@ echo "==> Asserting all pods Ready"
 kubectl wait --namespace "${NAMESPACE}" --for=condition=Ready pods --all \
   --timeout "${WAIT_TIMEOUT}"
 
+# The backend worker has no HTTP listener: its readiness is an exec test on the
+# boot-ready sentinel the app writes. The pod above only reached Ready by passing
+# that probe, so a sentinel the app never writes (or a dropped probe) surfaces as
+# a rollout timeout. Assert the probe is actually configured so a silent removal
+# — which would make readiness vacuously true — fails loudly here too.
+if kubectl get deployment -n "${NAMESPACE}" -l app.kubernetes.io/component=backend -o name | grep -q .; then
+  echo "==> Asserting the backend readiness sentinel probe is configured"
+  probe="$(kubectl get deployment -n "${NAMESPACE}" -l app.kubernetes.io/component=backend \
+    -o jsonpath='{.items[0].spec.template.spec.containers[?(@.name=="backend")].readinessProbe.exec.command}')"
+  if [[ -z "${probe}" ]]; then
+    echo "ERROR: backend Deployment has no readiness exec probe (recycle sentinel gate missing)" >&2
+    exit 5
+  fi
+  echo "    backend readiness exec probe present; pod reached Ready through it"
+fi
+
+# The config RBAC Role (patch/update on the env Secret, for recycle env writes)
+# is rendered only in k8s config mode. When present, assert the grant reaches the
+# named env Secret — a resourceNames-scoped patch a namespace-wide check would
+# miss. In file mode no Role is rendered and this is covered at the template lane.
+config_role="$(kubectl get role -n "${NAMESPACE}" -o name | grep -- '-config$' || true)"
+if [[ -n "${config_role}" ]]; then
+  echo "==> Asserting config RBAC grants patch/update on the env Secret"
+  sa_name="$(kubectl get serviceaccount -n "${NAMESPACE}" \
+    -l app.kubernetes.io/managed-by=Helm -o jsonpath='{.items[0].metadata.name}')"
+  sa="system:serviceaccount:${NAMESPACE}:${sa_name}"
+  for verb in patch update; do
+    if ! kubectl auth can-i "${verb}" "secret/${RELEASE}-env" -n "${NAMESPACE}" --as "${sa}" >/dev/null; then
+      echo "ERROR: ${sa} cannot ${verb} secret/${RELEASE}-env (recycle env write would 403)" >&2
+      exit 5
+    fi
+  done
+  echo "    ${sa} can patch/update the env Secret"
+else
+  echo "==> file config mode: no config Role rendered; RBAC patch/update covered at the template lane"
+fi
+
 echo "==> Running helm test ${RELEASE}"
 helm test "${RELEASE}" --namespace "${NAMESPACE}" --logs --timeout "${WAIT_TIMEOUT}"
 

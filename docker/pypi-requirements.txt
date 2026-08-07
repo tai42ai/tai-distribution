@@ -25,9 +25,9 @@
 tai42-contract==1.0.0
 tai42-kit==1.1.0
 tai42-toolbox==0.3.9
-tai42-skeleton[toolbox,files]==1.0.0
+tai42-skeleton[toolbox,files]==1.1.0
 tai42-agents==0.3.7
 tai42-storage-local==0.2.7
-tai42-backend-arq==0.4.6
+tai42-backend-arq==0.5.0
 tai42-identity-redis==0.2.7
 tai42-config-k8s==0.2.8

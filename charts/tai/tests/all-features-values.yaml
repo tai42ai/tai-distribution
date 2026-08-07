@@ -1,0 +1,41 @@
+# Parity-render values: every conditionally-emitted pinned pod-env key ON, so the
+# k8s tier-2 refusal parity test compares against the FULL pinned env surface (a
+# default render would hide keys behind their feature gates). k8s config mode so
+# the shape is k8s and the TAI_K8S_* identity keys emit. Both backend.type
+# branches are covered by the test rendering this file twice (arq + celery).
+config:
+  mode: k8s
+
+redis:
+  auth:
+    enabled: true
+
+memoryRedis:
+  enabled: true
+  auth:
+    enabled: true
+
+features:
+  accessControl:
+    enabled: true
+  versioning:
+    enabled: true
+  accounts:
+    enabled: true
+  connectors:
+    enabled: true
+  marketplace:
+    enabled: true
+
+metrics:
+  enabled: true
+
+pluginPrefix:
+  enabled: true
+
+backend:
+  enabled: true
+  # Overridden to celery on the second parity render so CELERY_* also appears.
+  type: arq
+  celery:
+    brokerUrl: "amqp://tai:parity@rabbitmq.example.com:5672//"

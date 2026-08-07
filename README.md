@@ -214,6 +214,25 @@ in the minimal image — add them via a derived image or a marketplace install
 first. Langfuse runs as its own stack from `compose/langfuse/` and likewise
 needs the monitoring plugin added.
 
+### Recycle and graceful shutdown
+
+Process-identity settings (broker/bus URLs, config mode, worker counts) cannot
+change in-process. A profile apply that touches one runs an orchestrated rolling
+**recycle**: the process drains its current work, exits cleanly, and Compose's
+`restart: unless-stopped` respawns it, which reloads the new env from `.env`. Two
+things in `compose/docker-compose.yml` make that safe:
+
+- **`TAI_SUPERVISED: compose`** in the shared `x-tai-app-env` anchor marks the
+  supervision shape so the platform detects compose deterministically and refuses
+  a recycle-class change to the anchor-pinned keys (they are re-injected from the
+  compose file on respawn, so a profile-carried change would silently revert) —
+  naming the manual step (edit the compose file, then recreate) instead of a
+  silent no-op. The full pinned set is the `x-tai-app-env` anchor itself.
+- **`stop_grace_period: 300s`** on `serve` and `backend` gives each `>=` its
+  in-flight drain budget (uvicorn request drain; arq `job_completion_wait` /
+  celery warm-drain) before Compose sends SIGKILL, so a recycle or a plain
+  `docker compose stop` never severs live work.
+
 ## Self-hosting docs
 
 Transport, environment, and config-provider guidance for running a server for

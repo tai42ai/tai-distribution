@@ -20,7 +20,10 @@ rules:
     resources: ["secrets"]
     resourceNames:
       - {{ include "tai.envSecretName" . | quote }}
-    verbs: ["get"]
+    {{- /* patch/update let the k8s config provider write env back (replace_env /
+           write_env — profile apply + recycle). Scoped by name to the env Secret
+           alone; the manifest ConfigMap stays read-only here. */}}
+    verbs: ["get", "patch", "update"]
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:
