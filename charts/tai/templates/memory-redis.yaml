@@ -1,0 +1,163 @@
+{{- if .Values.memoryRedis.enabled }}
+{{- /*
+Module-capable quickstart Redis for LangGraph flow memory (checkpoint + store) —
+a single-replica StatefulSet pinning upstream redis:8, which bundles RediSearch +
+RedisJSON. Kept SEPARATE from the core redis (own Service, volume, no worker bus,
+no shared password secret). ClusterIP-only. Runs under the redis image's own uid
+with fsGroup so /data is writable under a restricted Pod-Security-Admission
+namespace.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tai.memoryRedis.host" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: memory-redis
+spec:
+  clusterIP: None
+  selector:
+    {{- include "tai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: memory-redis
+  ports:
+    - name: redis
+      port: {{ .Values.memoryRedis.port }}
+      targetPort: redis
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tai.memoryRedis.host" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: memory-redis
+spec:
+  serviceName: {{ include "tai.memoryRedis.host" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: memory-redis
+  template:
+    metadata:
+      labels:
+        {{- include "tai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: memory-redis
+    spec:
+      serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.memoryRedis.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.memoryRedis.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.memoryRedis.securityContext.fsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: "{{ .Values.memoryRedis.image.repository }}:{{ .Values.memoryRedis.image.tag }}"
+          imagePullPolicy: {{ .Values.memoryRedis.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.memoryRedis.securityContext.runAsUser }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          # AOF on so flow checkpoints survive a restart, not just the last RDB
+          # snapshot. The password (when auth is on) is written into a private
+          # config file and handed to redis-server as `--requirepass` would be,
+          # without ever appearing in the container's argv (which any process in
+          # the pod can read from /proc). Any failure writing that file aborts the
+          # container rather than starting an unauthenticated Redis. Its auth
+          # Secret is separate from the core redis's, never shared.
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              conf=/etc/redis/redis.conf
+              umask 077
+              echo "appendonly yes" > "$conf"
+              if [ -n "${REDIS_PASSWORD:-}" ]; then
+                printf 'requirepass %s\n' "$REDIS_PASSWORD" >> "$conf"
+              fi
+              exec redis-server "$conf"
+          {{- if .Values.memoryRedis.auth.enabled }}
+          env:
+            # REDISCLI_AUTH is redis-cli's own env credential, so the health
+            # probes below authenticate without an `-a` flag in their argv.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tai.memoryRedisSecretName" . }}
+                  key: {{ .Values.memoryRedis.auth.existingSecretKey | default "memory-redis-password" }}
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tai.memoryRedisSecretName" . }}
+                  key: {{ .Values.memoryRedis.auth.existingSecretKey | default "memory-redis-password" }}
+          {{- end }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.memoryRedis.port }}
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli ping | grep -q PONG
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli ping | grep -q PONG
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.memoryRedis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: conf
+              mountPath: /etc/redis
+      volumes:
+        # Holds the generated redis.conf. Deliberately NOT the persistent data
+        # volume: the password must not outlive the pod on disk.
+        - name: conf
+          emptyDir: {}
+        {{- if not .Values.memoryRedis.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.memoryRedis.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "tai.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.memoryRedis.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.memoryRedis.persistence.size }}
+  {{- end }}
+{{- end }}

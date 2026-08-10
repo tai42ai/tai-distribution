@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "skip-changelog": true,
+      "package-name": "tai-distribution",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "charts/tai/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "docker/Dockerfile"
+        }
+      ]
+    }
+  }
+}

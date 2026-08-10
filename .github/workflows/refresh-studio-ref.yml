@@ -1,0 +1,67 @@
+# Pins docker/STUDIO_REF to a newly released tai-studio commit. Fired by
+# tai-studio's release-npm workflow after it publishes; the studio-release
+# dispatch carries the released commit sha. The bump lands as a PR whose
+# auto-merge is gated by branch protection's required checks; its `fix(image):`
+# type then drives release-please to cut the image release. The PAT (not
+# GITHUB_TOKEN) authors branch, PR, and merge so every follow-on workflow fires.
+#
+# Its own concurrency group: a studio-ref bump and a pypi pin refresh touch
+# different files on different branches, so they must never cancel each other.
+name: refresh-studio-ref
+
+on:
+  repository_dispatch:
+    types: [studio-release]
+
+permissions: {}
+
+concurrency:
+  group: refresh-studio-ref
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      - name: Rewrite STUDIO_REF to the released studio commit
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          set -euo pipefail
+          # The dispatched value must be a full 40-hex commit sha. A short sha,
+          # a tag, or an empty payload fails the run loudly rather than pinning a
+          # ref the release build cannot resolve to one immutable commit.
+          if [[ ! "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::studio-release payload sha is not a 40-hex commit: '${SHA}'"
+            exit 1
+          fi
+          current="$(cat docker/STUDIO_REF)"
+          if [ "${SHA}" = "${current}" ]; then
+            echo "STUDIO_REF already at ${SHA}; nothing to do"
+            echo "changed=0" >> "$GITHUB_ENV"
+          else
+            printf '%s\n' "${SHA}" > docker/STUDIO_REF
+            echo "STUDIO_REF: ${current} -> ${SHA}"
+            echo "changed=1" >> "$GITHUB_ENV"
+          fi
+      - name: Land the pin through a gated PR
+        if: env.changed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "tai42-dev"
+          git config user.email "dev@tai42.ai"
+          git checkout -B refresh-studio-ref
+          git add docker/STUDIO_REF
+          git commit -m "fix(image): pin studio to ${SHA}"
+          git push -f origin refresh-studio-ref
+          pr=$(gh pr list --head refresh-studio-ref --json url --jq '.[0].url')
+          if [ -z "$pr" ]; then
+            pr=$(gh pr create --fill --head refresh-studio-ref)
+          fi
+          gh pr merge --auto --squash "$pr"

@@ -1,0 +1,9 @@
+# ci fixture: memory-redis on WITH auth.
+# The module-capable flow-memory leg enabled and hardened: the redis:8
+# StatefulSet requires a password (own generated Secret, never the core redis's),
+# and the derived checkpoint/store conn strings carry $(MEMORY_REDIS_PASSWORD).
+
+memoryRedis:
+  enabled: true
+  auth:
+    enabled: true

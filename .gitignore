@@ -1,0 +1,16 @@
+# Local config / secrets — the compose bundle bind-mounts real config beside
+# the tracked *.example files. These must never be committed.
+.env
+.env.*
+**/.env
+**/.env.*
+compose/config/
+
+# Keep the example files tracked even though .env* is ignored above.
+!.env.example
+!**/.env.example
+
+# OS / editor cruft
+.DS_Store
+.idea/
+*.swp

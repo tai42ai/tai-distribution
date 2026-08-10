@@ -1,0 +1,138 @@
+{{- if .Values.backend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tai.fullname" . }}-backend
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  {{- with (include "tai.reloaderAnnotations" . | trim) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "tai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+        {{- with .Values.backend.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- /* Covers BOTH rendered config objects (manifest ConfigMap + env
+               Secret) so an env-only or manifest-only change rolls the pods. */}}
+        checksum/config: {{ print (include (print $.Template.BasePath "/configmap-manifest.yaml") .) (include (print $.Template.BasePath "/secret-env.yaml") .) | sha256sum }}
+        {{- with .Values.backend.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- /* Grace ≥ the worker's in-flight drain budget so a recycle/rollout
+             SIGTERM lets the current job finish before SIGKILL. */}}
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        {{- include "tai.podVolumes" . | nindent 8 }}
+        {{- include "tai.pluginPrefixVolume" . | nindent 8 }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- $depWait := include "tai.dependencyWait" . | trim -}}
+      {{- if or .Values.metrics.enabled $depWait }}
+      initContainers:
+        {{- /* Gate the main container on its backing stores being reachable
+               (avoids the boot crash-loop), then start the metrics sidecar. */}}
+        {{- with $depWait }}
+        {{- . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.metrics.enabled }}
+        {{- include "tai.metricsSidecar" . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ include "tai.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - backend
+            - worker
+            {{- if eq .Values.config.mode "file" }}
+            - --manifest-path
+            - /app/manifest.yml
+            {{- end }}
+            {{- with .Values.backend.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- include "tai.commonEnv" . | nindent 12 }}
+            {{- include "tai.pluginPrefixEnv" . | nindent 12 }}
+            {{- include "tai.backendEnv" . | nindent 12 }}
+            {{- include "tai.multiprocEnv" . | nindent 12 }}
+            {{- if .Values.backend.readinessProbe.enabled }}
+            {{- /* Same value drives the sentinel the app writes on boot-ready
+                   and the probe path below — one key, never two to keep in sync. */}}
+            - name: TAI_READY_SENTINEL_PATH
+              value: {{ .Values.backend.readinessProbe.sentinelPath | quote }}
+            {{- end }}
+          {{- if .Values.backend.livenessProbe.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                {{- toYaml .Values.backend.livenessProbe.exec.command | nindent 16 }}
+            initialDelaySeconds: {{ .Values.backend.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.backend.readinessProbe.enabled }}
+          {{- /* The worker has no HTTP listener, so readiness is a file-exists
+                 test on the boot-ready sentinel the app writes (and removes at
+                 shutdown). The path is ephemeral/container-local — a crash-restart
+                 starts unready until the fresh process re-writes it. */}}
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os, sys
+                  sys.exit(0 if os.path.exists({{ .Values.backend.readinessProbe.sentinelPath | quote }}) else 1)
+            initialDelaySeconds: {{ .Values.backend.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.backend.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.backend.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "tai.containerVolumeMounts" . | nindent 12 }}
+            {{- include "tai.pluginPrefixVolumeMount" . | nindent 12 }}
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
