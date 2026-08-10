@@ -77,11 +77,9 @@ jobs:
           retention-days: 1
 
   # Validate every compose file and every profile it declares. Defensive glob:
-  # core compose (A3: compose/docker-compose.yml with profiles minio|celery|
-  # agents-redis) and the langfuse compose (A4: compose/langfuse/
-  # docker-compose.yml) land later — the glob picks them up automatically, and
+  # `compose/**/docker-compose.yml` matches every compose file present, and
   # `config --profiles` discovers each file's profiles with no hardcoded list.
-  # Before A3/A4 land, no files match and the job passes with a clear notice.
+  # When no files match, the job passes with a clear notice.
   compose-config:
     runs-on: ubuntu-24.04
     steps:
@@ -112,7 +110,7 @@ jobs:
           shopt -s nullglob globstar
           files=(compose/**/docker-compose.yml)
           if [[ ${#files[@]} -eq 0 ]]; then
-            echo "::notice::no compose files under compose/ yet (A3 core / A4 langfuse not landed); nothing to validate"
+            echo "::notice::no compose files under compose/; nothing to validate"
             exit 0
           fi
           for f in "${files[@]}"; do
@@ -170,8 +168,7 @@ jobs:
       - name: helm lint
         run: helm lint charts/tai
       # Template matrix — bare defaults plus each scenario fixture the chart ships
-      # in its conventional ci/ values dir (A5 provides defaults / external-
-      # everything / celery fixtures).
+      # in its conventional ci/ values dir.
       - name: helm template matrix
         run: |
           set -euo pipefail

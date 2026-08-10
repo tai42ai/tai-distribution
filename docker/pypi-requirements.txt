@@ -25,6 +25,7 @@
 tai42-contract==1.5.0
 tai42-kit==1.4.0
 tai42-toolbox==0.4.0
+tai42-cli==1.0.0
 tai42-skeleton[toolbox,files]==1.6.0
 tai42-agents==0.5.0
 tai42-storage-local==0.3.0

@@ -5,7 +5,7 @@
 # One image, two source modes, selected by --build-arg SOURCE=<local|pypi>:
 #   local  — dev build from local checkouts (studio built from the live
 #            tai-studio sibling tree; tai42-* installed from the tai42/ monorepo
-#            member trees at core/{contract,kit,skeleton} + plugins/*). Runs on a
+#            member trees at core/{contract,kit,cli,skeleton} + plugins/*). Runs on a
 #            LOCAL builder only: the `siblings` named build context is the
 #            directory holding tai42/ and tai-studio/ and carries untracked
 #            secrets.
@@ -121,7 +121,7 @@ RUN uv venv "$VIRTUAL_ENV" && python -m ensurepip --upgrade
 # Excludes drop stale build artifacts: a leftover setuptools `build/lib` is
 # reused instead of `src/`, packaging stale code; `dist/` and `*.egg-info`
 # carry stale wheels/metadata. They must not seed the build.
-# then ONE uv pip install so the resolver satisfies the >=0.1,<0.2 first-party
+# then ONE uv pip install so the resolver satisfies the first-party
 # ranges from the local trees alone, without reaching PyPI for them — which is
 # what makes this stage work when those packages are unpublished. --no-sources is
 # required: several packages' pyproject `[tool.uv.sources]` mark first-party
@@ -133,6 +133,7 @@ FROM uv-base AS venv-local
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/contract/          /src/contract/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/kit/               /src/kit/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/toolbox/        /src/toolbox/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/cli/               /src/cli/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/core/skeleton/          /src/skeleton/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/agents/         /src/agents/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/storage-local/   /src/storage-local/
@@ -144,6 +145,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/contract \
       /src/kit \
       /src/toolbox \
+      /src/cli \
       "/src/skeleton[toolbox,files]" \
       /src/agents \
       /src/storage-local \

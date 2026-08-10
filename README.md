@@ -161,7 +161,7 @@ availability, and any plugin still quarantined.
 
 Release builds pull `tai42-*` from PyPI and fetch tai-studio at the commit SHA
 recorded in `docker/STUDIO_REF`. A dev build instead uses your local checkouts:
-the `tai42/` monorepo (platform members at `core/{contract,kit,skeleton}` +
+the `tai42/` monorepo (platform members at `core/{contract,kit,cli,skeleton}` +
 `plugins/*`) and the `tai-studio` repo, both cloned beside this one. Because the
 siblings context is the directory holding those checkouts — which may hold
 untracked secrets — the dev build MUST run on a LOCAL builder only:
