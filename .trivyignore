@@ -1,2 +1,13 @@
-# Justified CVE suppressions only — one per line with a comment explaining
-# why the CVE is unfixable/not-applicable. Empty = nothing suppressed.
+# Documented exceptions — pip's VENDORED copies in pip/_vendor (msgpack 1.1.2,
+# and pkg_resources taken from setuptools 70.3.0), surfaced by the
+# bom.cdx.json manifest pip ships since 26.2. Neither is importable by
+# application code; msgpack runs only inside pip's own HTTP-cache machinery,
+# and the setuptools finding (CVE in PackageIndex) targets code pip does not
+# vendor at all. The REAL distributions are installed at fixed versions and
+# floored in docker/Dockerfile (msgpack>=1.2.1, setuptools>=78.1.1).
+#
+# GHSA-6v7p-g79w-8964: remove when a pip release re-vendors msgpack >=1.2.1
+# (already bumped on pip's main branch).
+GHSA-6v7p-g79w-8964
+# CVE-2025-47273: remove when pip re-vendors setuptools >=78.1.1.
+CVE-2025-47273
