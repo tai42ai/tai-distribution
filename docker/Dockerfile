@@ -140,6 +140,8 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/backend-arq/     /src/backend-arq/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/identity-redis/  /src/identity-redis/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/config-k8s/      /src/config-k8s/
+# The msgpack/setuptools floors hold the transitive versions above the CVEs the
+# image vulnerability gate (HIGH, fixed-only) refuses; both venv flavors carry them.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --no-sources \
       /src/contract \
@@ -151,7 +153,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/storage-local \
       /src/backend-arq \
       /src/identity-redis \
-      /src/config-k8s
+      /src/config-k8s \
+      "msgpack>=1.2.1" \
+      "setuptools>=78.1.1"
 
 # Release install: the first-party set comes from docker/pypi-requirements.txt,
 # which pins EACH package to its own version. Packages release independently, so
@@ -170,7 +174,9 @@ ARG VERSION
 COPY docker/pypi-requirements.txt /tmp/pypi-requirements.txt
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
-      -r /tmp/pypi-requirements.txt
+      -r /tmp/pypi-requirements.txt \
+      "msgpack>=1.2.1" \
+      "setuptools>=78.1.1"
 
 FROM venv-${SOURCE} AS venv
 
