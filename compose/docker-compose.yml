@@ -114,6 +114,11 @@ x-tai-app-env: &tai-app-env
   ACCESS_CONTROL_REDIS_URL: redis://redis:6379/0
   CONNECTOR_STORE_REDIS_URL: redis://redis:6379/0
 
+  # --- namespace fallback ------------------------------------------------------
+  # Catch-all for every redis consumer without a specific *_REDIS_URL above; the
+  # flow engine payload store (FLOW_REDIS_URL) resolves through this fallback.
+  TAI_DEFAULT_REDIS_URL: redis://redis:6379/0
+
   # --- postgres registry: the "default" database -------------------------------
   # Every postgres-backed component binds to the "default" database (the binding
   # is unset, so it resolves to "default"), so one connection block serves them

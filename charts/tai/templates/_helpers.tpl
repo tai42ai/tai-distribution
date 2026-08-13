@@ -263,8 +263,10 @@ Emits a YAML list of env entries. Pass the root context.
      identity has no baked-in default: an unset URL means the feature is cleanly
      OFF, not a silent localhost, so the chart wires every var explicitly to run
      these features against the chart's Redis. These surfaces are inert until
-     used: their env presence alone opens no store at boot. */}}
-{{- range list "ACCESS_CONTROL_REDIS_URL" "INTERACTIONS_REDIS_URL" "TAI_TOOL_RUNS_REDIS_URL" "TAI_RATE_LIMIT_REDIS_URL" "HOOKS_REDIS_URL" "CONNECTOR_STORE_REDIS_URL" }}
+     used: their env presence alone opens no store at boot — except
+     FLOW_REDIS_URL, whose payload store the flow engine requires at boot (unset
+     refuses boot, not OFF). */}}
+{{- range list "ACCESS_CONTROL_REDIS_URL" "INTERACTIONS_REDIS_URL" "TAI_TOOL_RUNS_REDIS_URL" "TAI_RATE_LIMIT_REDIS_URL" "HOOKS_REDIS_URL" "CONNECTOR_STORE_REDIS_URL" "FLOW_REDIS_URL" }}
 - name: {{ . }}
   value: {{ include "tai.redis.url" $ | quote }}
 {{- end }}
