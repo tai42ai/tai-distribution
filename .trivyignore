@@ -1,13 +1,6 @@
-# Documented exceptions — pip's VENDORED copies in pip/_vendor (msgpack 1.1.2,
-# and pkg_resources taken from setuptools 70.3.0), surfaced by the
-# bom.cdx.json manifest pip ships since 26.2. Neither is importable by
-# application code; msgpack runs only inside pip's own HTTP-cache machinery,
-# and the setuptools finding (CVE in PackageIndex) targets code pip does not
-# vendor at all. The REAL distributions are installed at fixed versions and
-# floored in docker/Dockerfile (msgpack>=1.2.1, setuptools>=78.1.1).
-#
-# GHSA-6v7p-g79w-8964: remove when a pip release re-vendors msgpack >=1.2.1
-# (already bumped on pip's main branch).
+# pip-vendored copies inside pip/_vendor (msgpack 1.1.2, pkg_resources/setuptools
+# 70.3.0). pip 26.x is current and no release re-vendors the fixed versions; the
+# vendored code serves only pip's own internals and is unreachable from app code.
+# Re-check whenever the image's pip version moves.
 GHSA-6v7p-g79w-8964
-# CVE-2025-47273: remove when pip re-vendors setuptools >=78.1.1.
 CVE-2025-47273
