@@ -185,6 +185,18 @@ FROM venv-${SOURCE} AS venv
 # ---------------------------------------------------------------------------
 FROM python:3.13-slim AS final
 
+# The floating slim base can lag Debian security uploads (trivy gates the build
+# on fixable CRITICAL/HIGH CVEs); apply the security updates the tag has not
+# absorbed yet.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
+# The base interpreter's pip is unused at runtime (the app venv carries its own
+# for marketplace installs); dropping it removes its vendored copies from the
+# scan surface.
+RUN /usr/local/bin/python -m pip uninstall -y pip
+
 ARG VERSION
 LABEL org.opencontainers.image.title="tai" \
       org.opencontainers.image.description="Minimal-core tai server image: serve, backend worker, and metrics from one image; extra plugins install at runtime via the marketplace or bake into a derived image." \

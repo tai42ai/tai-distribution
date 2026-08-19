@@ -22,13 +22,13 @@
 # deliberately NOT listed here. This set MUST stay identical to the venv-local
 # install set in docker/Dockerfile — the image ships one roster regardless of
 # SOURCE.
-tai42-contract==1.11.0
-tai42-kit==1.9.1
-tai42-toolbox==0.5.1
-tai42-cli==1.3.0
-tai42-skeleton[toolbox,files]==2.1.0
-tai42-agents==0.9.0
-tai42-storage-local==0.3.0
-tai42-backend-arq==0.8.2
-tai42-identity-redis==0.3.0
-tai42-config-k8s==0.4.0
+tai42-contract==2.2.2
+tai42-kit==3.1.1
+tai42-toolbox==1.0.3
+tai42-cli==3.1.2
+tai42-skeleton[toolbox,files]==4.2.2
+tai42-agents==2.1.1
+tai42-storage-local==1.0.3
+tai42-backend-arq==1.0.3
+tai42-identity-redis==1.0.3
+tai42-config-k8s==1.0.3
