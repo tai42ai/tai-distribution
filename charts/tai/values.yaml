@@ -385,8 +385,11 @@ reloader:
 # A derived image is the alternative for a FIXED plugin roster and needs neither.
 pluginPrefix:
   # Mount a persistent plugin prefix into the serve and backend pods and point
-  # TAI_PLUGINS_PREFIX at it. OFF by default: without it a marketplace install
-  # lands in the image's ephemeral venv and is lost on container recreation.
+  # TAI_PLUGINS_PREFIX at it. OFF by default: without it a runtime marketplace
+  # install `pip install`s into the image venv, which readOnlyRootFilesystem
+  # makes read-only, so the install fails loudly. A runtime marketplace install
+  # REQUIRES enabled=true (a persistent, writable prefix); the alternative is a
+  # derived image with the plugins baked in.
   enabled: false
   # Absolute mount path inside the pod; also the TAI_PLUGINS_PREFIX value.
   path: /var/lib/tai/plugins
@@ -634,7 +637,9 @@ memoryRedis:
   # Quickstart StatefulSet settings (used when enabled=true).
   image:
     repository: redis
-    tag: "8"
+    # tag 8, pinned by digest so the module-capable base cannot float across a
+    # rebuild. Refresh the digest when intentionally moving to a newer redis 8.x.
+    tag: "8@sha256:344e3945a0b431c8ff1eecd58c5573538126bd756f02fc7e218ddf1fc2546366"
     pullPolicy: IfNotPresent
   # Same rationale as the core redis leg: run under the redis image's own uid 999
   # with a matching fsGroup so /data is writable under restricted PSA.
@@ -666,10 +671,16 @@ podSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# readOnlyRootFilesystem locks the image filesystem: the app writes only to the
+# explicit writable emptyDir mounts the chart provides — /tmp (the backend
+# boot-ready sentinel and any tempfile use) and the Prometheus multiproc dir. In
+# file mode config is static (env/manifest mount read-only via subPath), so no
+# runtime write touches the root filesystem.
 securityContext:
   runAsNonRoot: true
   runAsUser: 1000
   allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL

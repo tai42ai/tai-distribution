@@ -17,6 +17,9 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
   restartPolicy: Never
+  {{- /* The test pod only curls /ready — it never calls the Kubernetes API, so
+         it needs no token. */}}
+  automountServiceAccountToken: false
   {{- with .Values.imagePullSecrets }}
   imagePullSecrets:
     {{- toYaml . | nindent 4 }}

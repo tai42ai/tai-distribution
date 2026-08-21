@@ -165,6 +165,10 @@ services:
   db-migrate:
     image: *tai-image
     logging: *default-logging
+    # One-shot migrate on the app image; a memory ceiling and a cpu cap bound a
+    # single service so it cannot starve the host (mirrors the chart's app limits).
+    mem_limit: 512m
+    cpus: 1.0
     command: ["db", "migrate"]
     environment: *tai-app-env
     depends_on:
@@ -180,6 +184,10 @@ services:
     # Grace before SIGKILL on stop/recycle — >= the serving surface's in-flight
     # drain budget so uvicorn can finish live requests before the kill.
     stop_grace_period: 300s
+    # Memory ceiling above the chart's 1Gi single-worker limit because compose
+    # serve runs 2 workers; cpu cap bounds the busiest service on a single host.
+    mem_limit: 1536m
+    cpus: 2.0
     # Explicit multi-worker: serve's own default is 1 worker (silently
     # single-worker without this), and workers>1 on the default stateful http
     # transport is refused at boot unless --stateless-http is set. Bind 0.0.0.0
@@ -223,6 +231,9 @@ services:
     # budget (arq job_completion_wait / celery warm-drain) so the current job
     # finishes before the kill.
     stop_grace_period: 300s
+    # Matches the chart's 1Gi backend limit; cpu cap bounds the worker on a host.
+    mem_limit: 1024m
+    cpus: 1.5
     command: ["backend", "worker"]
     environment: *tai-app-env
     volumes:
@@ -260,6 +271,9 @@ services:
     image: *tai-image
     logging: *default-logging
     restart: unless-stopped
+    # Matches the chart's 256Mi metrics-sidecar limit; small cpu cap.
+    mem_limit: 256m
+    cpus: 0.5
     # backend_metrics_host defaults to 127.0.0.1 (unreachable via the container
     # IP), so bind 0.0.0.0 for cross-container scraping.
     command: ["metrics", "--host", "0.0.0.0", "--port", "8012"]
@@ -291,6 +305,9 @@ services:
     image: postgres:16-alpine
     logging: *default-logging
     restart: unless-stopped
+    # Matches the chart's 512Mi postgres limit; cpu cap bounds the DB on a host.
+    mem_limit: 512m
+    cpus: 1.0
     # Creates the `tai` database on first boot (POSTGRES_DB). No working default
     # password — required so an unchanged deployment cannot share a credential.
     environment:
@@ -311,6 +328,9 @@ services:
     image: redis:7-alpine
     logging: *default-logging
     restart: unless-stopped
+    # Matches the chart's 256Mi redis limit; small cpu cap.
+    mem_limit: 256m
+    cpus: 0.5
     # Internal-only (never host-published), so it runs without auth to keep the
     # connection URLs simple; the app reaches it over the compose network.
     # --appendonly yes for durability parity with the chart's redis: feature
@@ -333,6 +353,8 @@ services:
     profiles: ["minio"]
     logging: *default-logging
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     # Compose interpolates EVERY service in this file, including ones no active
     # profile selects, so a `${VAR:?}` guard here would also block the default
     # profile-less stack. The credential is therefore substituted unguarded and
@@ -366,6 +388,8 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     profiles: ["minio"]
+    mem_limit: 128m
+    cpus: 0.5
     depends_on:
       minio:
         condition: service_healthy
@@ -395,10 +419,14 @@ services:
   # shared env above. A custom (non-guest) user works over the compose network
   # without RabbitMQ's loopback-user restriction.
   rabbitmq:
-    image: rabbitmq:4-management-alpine
+    # tag 4-management-alpine, pinned by digest so the broker base cannot float
+    # across a pull. Refresh the digest when moving to a newer rabbitmq 4.x.
+    image: rabbitmq:4-management-alpine@sha256:669e803629d3bb9bd77f6c51772a51bfa59a84f9ab194393639980b866613bf2
     profiles: ["celery"]
     logging: *default-logging
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:-tai}"
       RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:-}"
@@ -437,10 +465,14 @@ services:
   # manifest/env to use it. A separate service so it never shares the core
   # redis's state.
   redis-agents:
-    image: redis:8
+    # tag 8, pinned by digest so the module-capable base cannot float across a
+    # pull. Refresh the digest when moving to a newer redis 8.x.
+    image: redis:8@sha256:344e3945a0b431c8ff1eecd58c5573538126bd756f02fc7e218ddf1fc2546366
     profiles: ["agents-redis"]
     logging: *default-logging
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
     volumes:
       - tai-redis-agents-data:/data
     healthcheck:

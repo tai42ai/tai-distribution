@@ -55,12 +55,21 @@ spec:
         app.kubernetes.io/component: schema-init
     spec:
       restartPolicy: Never
+      {{- /* Runs under the namespace default ServiceAccount (see above) and never
+             calls the Kubernetes API, so it needs no token. */}}
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- /* Writable /tmp under readOnlyRootFilesystem — `tai db migrate` uses the
+             stdlib tempfile dir. A pod-local emptyDir, not a release object, so the
+             pre-hook constraint (reference no release-managed objects) holds. */}}
+      volumes:
+        - name: tmp
+          emptyDir: {}
       initContainers:
         - name: wait-for-db
           image: {{ include "tai.image" . }}
@@ -104,4 +113,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "tai.dbSecretName" . | quote }}
                   key: {{ include "tai.dbSecretKey" . | quote }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
 {{- end }}

@@ -62,19 +62,19 @@ metrics port on both the serve Service and a headless backend Service.
 Native sidecars require **Kubernetes >= 1.29** (the `SidecarContainers` feature,
 GA in 1.29).
 
-### Config is mounted read-only via subPath; `/app` stays writable
+### Config is mounted read-only via subPath; `file` mode is static
 
 In `file` mode (the default) the chart renders a Secret (`.env`) and a ConfigMap
 (`manifest.yml`) and mounts them **read-only as individual files via `subPath`**
-at `/app/.env` and `/app/manifest.yml`. The app's file config provider writes
-`.env` / `manifest.yml` and a `.lock` file under the config dir on config
-mutations, and `/app` is also the image WORKDIR — so the chart does NOT shadow
-`/app` with a whole-directory read-only mount. `subPath` keeps only those two
-files read-only while `/app` itself remains writable. Consequence: `file` mode is
-**static config** — a `.lock`/atomic-rename write onto a `subPath`-mounted file
-would fail loudly, which is correct; for **dynamic multi-pod config** use
-`config.mode=k8s` (the `tai42-config-k8s` provider reads/writes env + manifest via
-the Kubernetes API, and the chart grants the ServiceAccount the matching RBAC).
+at `/app/.env` and `/app/manifest.yml`. The app pods also run with
+`readOnlyRootFilesystem: true`, so the whole image filesystem — `/app` included —
+is read-only; the app writes only to the explicit writable `emptyDir` mounts the
+chart provides (`/tmp` and the Prometheus multiproc dir). Consequence: `file` mode
+is **static config** — a `.lock`/atomic-rename write onto a `subPath`-mounted file
+(or anywhere on the root filesystem) would fail loudly, which is correct; for
+**dynamic multi-pod config** use `config.mode=k8s` (the `tai42-config-k8s` provider
+reads/writes env + manifest via the Kubernetes API, and the chart grants the
+ServiceAccount the matching RBAC).
 
 ### `config.mode=k8s` grants namespace-wide read of Secrets and ConfigMaps
 
@@ -158,17 +158,20 @@ in. Add the ones a deployment needs one of two ways:
   provider's connection but do **not** ship the plugin.
 - **Marketplace, at runtime** — install/update/uninstall plugins against a running
   server. A marketplace install `pip install`s the package **and** patches the
-  manifest in place. For that to survive a container recreation, BOTH halves must
-  land on persistent storage:
+  manifest in place. Under the chart's read-only root filesystem the `pip install`
+  can only write to a persistent, writable plugin prefix, so a runtime marketplace
+  install **requires** `pluginPrefix.enabled=true`; without it the install targets
+  the read-only image venv and **fails loudly** (no ephemeral fallback). Both
+  halves must land on persistent storage:
 
   | Half | Where | How to persist |
   |---|---|---|
-  | installed package files | plugin prefix (`TAI_PLUGINS_PREFIX`) | set `pluginPrefix.enabled=true` — the chart mounts a persistent volume into the serve and backend pods and sets the env |
+  | installed package files | plugin prefix (`TAI_PLUGINS_PREFIX`) | **required** — set `pluginPrefix.enabled=true`; the chart mounts a persistent, writable volume into the serve and backend pods and sets the env. Without it the `pip install` fails under the read-only root filesystem |
   | plugin registration | the manifest | use `config.mode=k8s` — the manifest lives in a ConfigMap patched via the Kubernetes API. The default `config.mode=file` mounts it **read-only** (static config); a runtime patch fails loudly there |
 
-  Persist only one half and a recreated container boots with code and registration
-  out of sync. `pluginPrefix.enabled=true` **with** `config.mode=k8s` is the
-  runtime-install-durable combination.
+  `pluginPrefix.enabled=true` **with** `config.mode=k8s` is the combination that
+  lets a runtime marketplace install both succeed and survive a container
+  recreation. For a FIXED plugin roster, a derived image needs neither.
 
 **Multi-pod.** The plugin prefix is one volume mounted read-write by every app pod
 (serve + backend are separate Deployments — two pods even at one replica each), so
@@ -410,10 +413,21 @@ Postgres and Redis rather than relying on chart generation.
 
 Every pod carries a complete `restricted`-profile context (`runAsNonRoot`,
 `runAsUser`, `allowPrivilegeEscalation: false`, `drop: [ALL]`,
-`seccompProfile: RuntimeDefault`). The app pods run as uid 1000; the quickstart
-DB pods run under their own image uids (postgres 70, redis 999) with `fsGroup`
-so the fresh PVC is writable and `PGDATA` at a subdir of the mount. The
-`helm test` pod and the schema-init hook carry the same restricted context.
+`seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem: true`). The app pods
+run as uid 1000; the quickstart DB pods run under their own image uids (postgres
+70, redis 999) with `fsGroup` so the fresh PVC is writable and `PGDATA` at a
+subdir of the mount. Under the read-only root filesystem every container writes
+only to explicit writable `emptyDir` mounts: `/tmp` and the Prometheus multiproc
+dir for the app pods, `/var/run/postgresql` (the Unix socket dir) for Postgres,
+`/data` + `/etc/redis` for Redis. The `helm test` pod and the schema-init hook
+carry the same restricted context.
+
+`automountServiceAccountToken` is `false` on every pod that does not call the
+Kubernetes API — the DB StatefulSets, the schema-init hook, the `helm test` pod,
+and the serve/backend pods in the default `config.mode=file`. It is mounted on
+the serve/backend pods only under `config.mode=k8s`, where the `tai42-config-k8s`
+provider reads/watches the env Secret and manifest ConfigMap via the API (the
+config Role is bound only then).
 
 ## Prerequisites (documented, not bundled)
 

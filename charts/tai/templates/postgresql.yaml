@@ -45,6 +45,8 @@ spec:
         app.kubernetes.io/component: postgresql
     spec:
       serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- /* This pod never calls the Kubernetes API, so it needs no token. */}}
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -64,6 +66,7 @@ spec:
             runAsNonRoot: true
             runAsUser: {{ .Values.postgresql.securityContext.runAsUser }}
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -116,6 +119,18 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            {{- /* Postgres opens its Unix socket under /var/run/postgresql; with
+                   a read-only root filesystem that dir must be a writable volume.
+                   fsGroup makes the emptyDir group-writable for the DB uid. */}}
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: run
+          emptyDir: {}
+        {{- if not .Values.postgresql.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
   {{- if .Values.postgresql.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:
@@ -131,9 +146,5 @@ spec:
         resources:
           requests:
             storage: {{ .Values.postgresql.persistence.size }}
-  {{- else }}
-      volumes:
-        - name: data
-          emptyDir: {}
   {{- end }}
 {{- end }}
