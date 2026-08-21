@@ -266,6 +266,10 @@ works out of the box:
 helm install tai charts/tai --set memoryRedis.enabled=true
 ```
 
+The image ships `LLM_PROVIDER_CHECKPOINT_TTL_MINUTES=43200`, a 30-day idle
+retention on conversation checkpoints. Set it in the deployment env (`config.env`)
+to override — a positive number of minutes, or empty to keep checkpoints forever.
+
 **Auth.** Off by default (the Service is ClusterIP-only). Set
 `memoryRedis.auth.enabled=true` to require a password — the StatefulSet gets
 `--requirepass` (via a private config file, never argv) and the chart generates a
