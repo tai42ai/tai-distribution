@@ -216,6 +216,9 @@ ENV VIRTUAL_ENV=/opt/tai/venv \
     PATH=/opt/tai/venv/bin:$PATH \
     STUDIO_DIST_PATH=/opt/tai/studio-dist \
     PYTHONUNBUFFERED=1
+# Bounded conversation-checkpoint retention for image deployments (the library
+# default keeps checkpoints forever); operators override or unset per install.
+ENV LLM_PROVIDER_CHECKPOINT_TTL_MINUTES=43200
 COPY --from=venv   /opt/tai/venv        /opt/tai/venv
 COPY --from=studio /studio/apps/studio/dist /opt/tai/studio-dist
 
