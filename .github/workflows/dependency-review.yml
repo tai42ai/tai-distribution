@@ -1,0 +1,29 @@
+# Dependency review on pull requests.
+#
+# Trivy (ci.yml build-smoke + trivy-scheduled.yml) scans the BUILT image for
+# known-vulnerable OS/library packages. This job is complementary and PR-time: it
+# diffs the dependency manifests a PR touches (e.g. docker/pypi-requirements.txt)
+# against the base and fails when the change introduces a dependency with a
+# known vulnerability at or above the configured severity, before the image is
+# ever built. It reviews only what the PR changes, so it adds no cost to a PR
+# that touches no dependency manifest.
+
+name: dependency-review
+
+on:
+  pull_request:
+
+# Read-only: the action reads the dependency graph via the API; it writes nothing.
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # Match the image scan's gate: block a PR that adds a HIGH/CRITICAL
+          # vulnerable dependency; lower severities are surfaced, not blocking.
+          fail-on-severity: high

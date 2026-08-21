@@ -30,6 +30,44 @@ jobs:
         with:
           dockerfile: docker/Dockerfile
 
+  # Banned client/domain terms guard. The platform is generic: no client or
+  # product name may appear in any tracked or newly added file (README,
+  # CONTRIBUTING, chart values, self-host docs). The term list below is the set
+  # of fragmented client/domain names this repo must never contain; each is
+  # assembled from fragments so this workflow file itself carries no contiguous
+  # banned term for the scan to trip on.
+  banned-terms:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Scan tracked + untracked files for banned terms
+        run: |
+          set -uo pipefail
+          terms=(
+            "conci""erge"
+            "bookin""guru"
+            "bookin""-guru"
+            "bookin""_guru"
+          )
+          # \b word boundaries need PCRE (-P); -I skips binaries; --untracked
+          # also scans new, not-yet-committed files so a banned term is caught
+          # before it is committed, not only after.
+          pattern="$(IFS='|'; printf '%s' "\\b(${terms[*]})\\b")"
+          # git grep exits 0 = matches, 1 = clean, >1 = scanner error (e.g. git
+          # built without PCRE support, malformed pattern). Distinguish a clean
+          # scan from a scanner that never ran.
+          status=0
+          hits="$(git grep -nPiI --untracked -- "${pattern}")" || status=$?
+          if [[ ${status} -eq 0 ]]; then
+            echo "::error::banned client/domain term(s) found:"
+            echo "${hits}"
+            exit 1
+          elif [[ ${status} -ne 1 ]]; then
+            echo "::error::banned-terms scanner failed to run (git grep exit ${status})"
+            exit "${status}"
+          fi
+          echo "banned-terms guard: clean"
+
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
   # `siblings` build context does not exist here. SOURCE=pypi therefore requires

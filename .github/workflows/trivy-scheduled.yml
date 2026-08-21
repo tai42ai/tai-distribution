@@ -1,0 +1,49 @@
+# Scheduled re-scan of the PUBLISHED image.
+#
+# ci.yml and release.yml scan the image only at build time (push / PR / tag). A
+# CVE disclosed against the shipped base image AFTER a release would otherwise
+# stay invisible until an unrelated rebuild. This job pulls the live `latest`
+# tag on a daily schedule and re-runs trivy with the SAME gate policy as the
+# build-time scans (fixable CRITICAL/HIGH, honouring the checked-in
+# .trivyignore), so a newly disclosed vulnerability surfaces as a failed run.
+#
+# A red here means the published image needs a rebuild against a patched base;
+# it blocks no PR (this workflow has no push / PR trigger).
+
+name: trivy-scheduled
+
+on:
+  schedule:
+    # Daily safety-net re-scan; off-peak and off-the-hour to dodge GitHub's
+    # on-the-hour scheduler congestion.
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read # pull the published image from GHCR
+
+jobs:
+  rescan:
+    runs-on: ubuntu-24.04
+    steps:
+      # Checkout so trivy auto-reads the repo-root .trivyignore, matching the
+      # build-time scans' exception set.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Same policy as ci.yml / release.yml: fail on FIXABLE critical/high
+      # (--ignore-unfixed), os + library, honouring the checked-in .trivyignore.
+      - name: Trivy scan (published latest image)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/tai42ai/tai:latest
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
