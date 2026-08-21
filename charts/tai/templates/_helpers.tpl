@@ -560,13 +560,18 @@ Pod volumes shared by serve / backend pods.
 - name: metrics-multiproc
   emptyDir: {}
 {{- end }}
+{{/* Writable /tmp under readOnlyRootFilesystem: the backend boot-ready sentinel
+     and any stdlib tempfile use land here. */}}
+- name: tmp
+  emptyDir: {}
 {{- end -}}
 
 {{/*
 Container volumeMounts shared by the app + metrics containers. In file mode the
-env / manifest mount read-only as individual files via subPath so /app itself
-(the image WORKDIR) stays writable for the config lock file and any runtime
-writes.
+env / manifest mount read-only as individual files via subPath. Under
+readOnlyRootFilesystem: true /app (the image WORKDIR) is itself read-only; any
+runtime writes go to the explicit writable emptyDir mounts — /tmp and, with
+metrics enabled, the Prometheus multiproc dir under /var/run/tai.
 */}}
 {{- define "tai.containerVolumeMounts" -}}
 {{- if eq .Values.config.mode "file" }}
@@ -591,5 +596,7 @@ non-root securityContext.
 - name: metrics-multiproc
   mountPath: {{ dir .Values.metrics.multiprocDir }}
 {{- end }}
+- name: tmp
+  mountPath: /tmp
 {{- end -}}
 

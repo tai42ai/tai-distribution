@@ -44,6 +44,8 @@ spec:
         app.kubernetes.io/component: redis
     spec:
       serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- /* This pod never calls the Kubernetes API, so it needs no token. */}}
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -59,10 +61,13 @@ spec:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          {{- /* readOnlyRootFilesystem: redis writes only to /data (its data
+                 volume) and /etc/redis (the conf emptyDir) — both writable mounts. */}}
           securityContext:
             runAsNonRoot: true
             runAsUser: {{ .Values.redis.securityContext.runAsUser }}
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL

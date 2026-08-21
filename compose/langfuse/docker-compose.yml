@@ -48,7 +48,12 @@ x-langfuse-common-env: &langfuse-common-env
 services:
   langfuse-web:
     <<: *service-defaults
-    image: langfuse/langfuse:3
+    # tag 3, pinned by digest so the Langfuse major cannot float across a pull.
+    # Refresh the digest when moving to a newer langfuse 3.x.
+    image: langfuse/langfuse:3@sha256:60a668b1dd06e2d9a034ba8b2ed5e84303e66c6202d76b288020059a755fd037
+    # Node app; ceiling above the datastores, cpu cap bounds it on a single host.
+    mem_limit: 1536m
+    cpus: 2.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +97,13 @@ services:
 
   langfuse-worker:
     <<: *service-defaults
-    image: langfuse/langfuse-worker:3
+    # tag 3, pinned by digest so the Langfuse major cannot float across a pull.
+    # Refresh the digest when moving to a newer langfuse 3.x.
+    image: langfuse/langfuse-worker:3@sha256:138a5b510cd76262a2abb02af1ddc563105013fdc9a62e63ccce526140ad05ba
+    # Ingestion worker is the memory-hungriest service; generous ceiling to avoid
+    # OOM under real ingestion, cpu cap bounds it on a single host.
+    mem_limit: 2048m
+    cpus: 2.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,6 +119,8 @@ services:
   postgres:
     <<: *service-defaults
     image: postgres:16-alpine
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-langfuse}
       POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:?set LANGFUSE_POSTGRES_PASSWORD in .env}
@@ -124,6 +137,10 @@ services:
   clickhouse:
     <<: *service-defaults
     image: clickhouse/clickhouse-server:24.8
+    # ClickHouse is memory-hungry; a generous ceiling avoids OOM under ingestion
+    # while still bounding the host. Cpu cap bounds it on a single host.
+    mem_limit: 4g
+    cpus: 2.0
     environment:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: default
@@ -141,6 +158,8 @@ services:
   minio:
     <<: *service-defaults
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    mem_limit: 512m
+    cpus: 1.0
     command: ["server", "/data"]
     environment:
       MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:?set LANGFUSE_MINIO_ROOT_USER in .env}
@@ -157,13 +176,19 @@ services:
   redis:
     <<: *service-defaults
     image: redis:7-alpine
+    # noeviction queue; give headroom above the core redis so BullMQ jobs are not
+    # dropped, cpu cap bounds it on a single host.
+    mem_limit: 512m
+    cpus: 0.5
     # requirepass is read from the container env at runtime so the literal
     # password never lands in the rendered compose config / `docker inspect`.
     # noeviction: Langfuse uses Redis as a BullMQ queue — evicting keys would
-    # silently drop queued ingestion jobs.
+    # silently drop queued ingestion jobs. maxmemory is set below the container
+    # mem_limit so under memory pressure noeviction rejects writes gracefully
+    # instead of the cgroup OOM-killing the container.
     environment:
       REDIS_PASSWORD: ${LANGFUSE_REDIS_PASSWORD:?set LANGFUSE_REDIS_PASSWORD in .env}
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory-policy noeviction"]
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 448mb --maxmemory-policy noeviction"]
     volumes:
       - langfuse-redis-data:/data
     healthcheck:

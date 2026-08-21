@@ -34,6 +34,12 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "tai.serviceAccountName" . }}
+      {{- /* The API token is mounted ONLY in k8s config mode, where the
+             tai42-config-k8s provider reads/watches the env Secret and manifest
+             ConfigMap via the Kubernetes API (the config Role is bound only then).
+             In file mode no container in this pod calls the API, so the token is
+             dropped. */}}
+      automountServiceAccountToken: {{ eq .Values.config.mode "k8s" }}
       {{- /* Grace ≥ the serving surface's drain budget so a recycle/rollout
              SIGTERM lets uvicorn drain in-flight requests before SIGKILL. */}}
       terminationGracePeriodSeconds: {{ .Values.serve.terminationGracePeriodSeconds }}
