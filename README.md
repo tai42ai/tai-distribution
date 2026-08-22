@@ -134,6 +134,22 @@ picks **exactly one** of two mutually exclusive modes:
   stop, never an improvised substitute. The base server image deliberately omits
   it to stay lean.
 
+**Host prerequisite (container mode, builtin engine).** The engine
+(`docker:28-dind-rootless`) runs a **rootless** docker-in-docker daemon:
+rootlesskit must create an unprivileged Linux user namespace for it. On a host
+with AppArmor **enforcing** the Ubuntu 23.10+/24.04 hardening
+`kernel.apparmor_restrict_unprivileged_userns=1`, that userns creation is
+**denied** (verified on real runners) — the engine container exits (1) ~2s after
+start with `[rootlesskit:parent] error: failed to start the child: fork/exec
+/proc/self/exe: operation not permitted` and container isolation is unavailable.
+To run the rootless engine there, permit unprivileged user namespaces on the host:
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (persist it under
+`/etc/sysctl.d/` for reboots). The daemon still runs fully rootless — this only
+relaxes a host-level userns restriction. If you cannot change the host, point
+`SANDBOX_DOCKER_HOST` at an **external** engine host that allows it (a `tcp://`
+endpoint over mTLS), or use the direct/host provider (`tai42_sandbox_local`, no
+isolation) on a trusted single-tenant box.
+
 **Session images (container mode).** Two pinned images ship on the release lane,
 each multi-arch, SBOM- and provenance-attested, trivy-gated before push, and
 cosign-keyless-signed:

@@ -470,12 +470,20 @@ sandbox:
     # prefer `runtimeClassName`, drop `privileged`/SYS_ADMIN, and let the runtime
     # provide the isolation. This privilege lives ONLY on this pod.
     #
-    # NODE PREREQUISITE: `privileged: true` lets rootlesskit create the nested
-    # userns with no node sysctl change on a stock node — the AppArmor
-    # unprivileged-userns gate does not apply inside a privileged container. A node
-    # with a hardened/custom AppArmor policy that additionally mediates the
-    # container's rootlesskit path can still need a `userns` allowance (node
-    # hardening, not the norm).
+    # NODE PREREQUISITE (unprivileged userns): rootlesskit must create an
+    # unprivileged user namespace for the rootless daemon. `privileged: true` clears
+    # this on a stock node, BUT a node with AppArmor ENFORCING the Ubuntu
+    # 23.10+/24.04 hardening `kernel.apparmor_restrict_unprivileged_userns=1` still
+    # DENIES that userns creation (verified on real runners): the engine container
+    # exits(1) ~2s after start with
+    #   [rootlesskit:parent] error: failed to start the child: fork/exec /proc/self/exe: operation not permitted
+    # and container isolation is unavailable. To run the builtin engine on such a
+    # node, permit unprivileged userns on the NODE —
+    # `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (persist under
+    # /etc/sysctl.d/ for reboots). The daemon still runs fully rootless; this only
+    # relaxes a node-level userns restriction. If you cannot change the node, use
+    # `engine.mode: external` (connect to an engine host that allows it) or run
+    # tai42_sandbox_local (no isolation) on a trusted single-tenant box.
     podSecurityContext:
       runAsNonRoot: true
       runAsUser: 1000
