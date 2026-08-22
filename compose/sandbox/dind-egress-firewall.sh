@@ -1,82 +1,91 @@
 #!/bin/sh
 # dind inner-bridge egress firewall — programmed at daemon start, BEFORE the
-# daemon accepts any session create. Runs INSIDE the rootless-dind user
-# namespace (NET_ADMIN there, no host privilege).
+# daemon accepts any session create. Installs rules at the top of the
+# DOCKER-USER chain (docker traverses it FIRST in FORWARD and never flushes it
+# on reloads) so inner-session egress to the deployment is filtered.
+#
+# POSTURE — runs as ROOT, enters dockerd's ROOTLESS netns with `nsenter -n`.
+# The rootless daemon owns its network namespace via a rootlesskit CHILD user
+# namespace; programming DOCKER-USER there needs CAP_SYS_ADMIN over that child
+# userns, which the rootless user (uid 1000) does NOT hold. So this script is
+# run as root — by the privileged container's root entrypoint in compose, and
+# by a privileged root sidecar (shareProcessNamespace) in the k8s chart — while
+# dockerd itself stays rootless. Errors surface LOUDLY (any failed step aborts —
+# never a daemon whose sessions are unconfined).
 #
 # Every agent session is an inner container of this rootless-dind daemon, NAT'd
-# out through the engine's network namespace. This installs deny rules into the
-# DOCKER-USER chain — the chain docker guarantees is traversed FIRST in FORWARD
-# and never flushes on daemon reloads — so they apply to ALL inner-session
-# egress:
-#   - DROP the deployment-internal RFC1918 ranges (10/8, 172.16/12, 192.168/16;
-#     the sandbox-ctrl subnet is one of these) — a session must reach NOTHING of
-#     the deployment (serve, backend, datastores, the control API).
-#   - DROP cloud metadata 169.254.169.254 and the whole 169.254.0.0/16 link-local
-#     range that covers it.
-#   - ALLOW everything else: the public internet + DNS. Egress default is OPEN by
-#     ruling (README §A.6) — this is NOT an Anthropic-only allowlist (that
-#     hardening is offered in docs, not forced here).
+# out through the engine's network namespace, so these DOCKER-USER rules apply
+# to ALL inner-session egress:
+#   - DENY the full private + link-local space (10/8, 172.16/12, 192.168/16,
+#     169.254/16) so a session reaches NOTHING private — not only peers on the
+#     sandbox control network but any deployment infra reachable via the HOST's
+#     own routing (e.g. an in-VPC datastore at 10.x off this engine's ENI), and
+#     cloud metadata 169.254.169.254. Public internet stays OPEN (egress default
+#     is OPEN by ruling — NOT an Anthropic-only allowlist; that hardening is
+#     offered in docs, not forced here).
+#   - The catch: the rootless daemon's OWN egress plumbing rides private space
+#     too. With `rootlesskit --net=vpnkit`, vpnkit transparently proxies inner
+#     outbound through the docker0 bridge address, and the DNS resolver is the
+#     tap0 (vpnkit) gateway. So the daemon's own connected subnets are ACCEPTed
+#     FIRST (above the DROPs) — else egress + DNS die.
 #
 # The app control path is unaffected: serve/backend -> engine:2376 hits the
 # engine's INPUT (not FORWARD), so the control API stays reachable while inner
-# sessions cannot address the engine's own RFC1918 address.
-#
-# Errors surface LOUDLY: any step that fails aborts (the caller backgrounds this
-# and continues starting dockerd, so a failure is visible in the engine log and
-# must be treated as a STOP — never a daemon whose sessions are unconfined).
+# sessions cannot address the engine's own private address.
 set -eu
 
 log() { echo "[dind-egress-firewall] $*" >&2; }
 fail() { log "FATAL: $*"; exit 1; }
 
-# Deployment-internal + link-local/metadata ranges denied to inner sessions.
-INTERNAL_CIDRS="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16"
+# Full private + link-local ranges denied to inner sessions.
+PRIVATE_CIDRS="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16"
 
-# 1. Wait for the rootless dockerd (same PID namespace as this script). Its
-#    network namespace — where docker0 and the DOCKER-USER chain live — is the
-#    rootlesskit child netns we must program.
+# Select the dockerd whose netns actually holds the DOCKER-USER chain. During
+# rootless startup `pidof dockerd` can briefly report a transient pid that then
+# re-execs and dies, so pick the one that is READY (chain present) — not just
+# the first — and wait until such a pid exists.
 i=0
 DOCKERD_PID=""
 while [ -z "$DOCKERD_PID" ]; do
-  DOCKERD_PID="$(pidof dockerd 2>/dev/null || true)"
+  for _p in $(pidof dockerd 2>/dev/null || true); do
+    if nsenter -t "$_p" -n iptables -w -n -L DOCKER-USER >/dev/null 2>&1; then
+      DOCKERD_PID="$_p"
+      break
+    fi
+  done
   [ -n "$DOCKERD_PID" ] && break
   i=$((i + 1))
-  [ "$i" -gt 120 ] && fail "dockerd did not start within 120s"
+  [ "$i" -gt 120 ] && fail "no dockerd netns with a DOCKER-USER chain within 120s"
   sleep 1
 done
-# pidof may return several PIDs (space-separated); take the first.
-DOCKERD_PID="${DOCKERD_PID%% *}"
-log "dockerd pid=$DOCKERD_PID"
 
-# Every iptables call runs INSIDE dockerd's netns (rootless: NET_ADMIN within the
-# user namespace, no host privilege).
+# Every iptables call runs INSIDE dockerd's rootless netns.
 in_netns() { nsenter -t "$DOCKERD_PID" -n "$@"; }
 
-# 2. Wait for docker to create the DOCKER-USER chain (it does so once the daemon
-#    finishes bringing up its iptables). Docker traverses DOCKER-USER FIRST in
-#    FORWARD and preserves pre-existing user rules across reloads, so ours stick.
-i=0
-while ! in_netns iptables -w -n -L DOCKER-USER >/dev/null 2>&1; do
-  i=$((i + 1))
-  [ "$i" -gt 120 ] && fail "DOCKER-USER chain not present within 120s of dockerd start"
-  sleep 1
-done
+# The daemon's OWN connected subnets INSIDE its netns — the inner-session bridge
+# (docker0) and the rootless vpnkit uplink (tap0, e.g. 192.168.65.0/24). These
+# carry the sandbox's own egress + DNS plumbing and fall inside the private
+# ranges above, so they are ACCEPTed first. Derived from the daemon's routes so
+# they track whatever docker0/vpnkit actually use.
+ALLOW_CIDRS="$(in_netns ip -o route show scope link 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.' || true)"
+[ -n "$ALLOW_CIDRS" ] || fail "could not resolve the daemon's own subnets to allow"
+log "dockerd pid=$DOCKERD_PID; allow(own) -> $ALLOW_CIDRS; deny(private) -> $PRIVATE_CIDRS"
 
-# 3. Install the deny rules idempotently at the TOP of DOCKER-USER (drop before
-#    docker's own accept). Insert at position 1 only when the rule is absent, so
-#    a re-run is a no-op rather than a duplicate.
-add_drop() {
-  _cidr="$1"
-  if in_netns iptables -w -C DOCKER-USER -d "$_cidr" -j DROP 2>/dev/null; then
-    log "already denied -> $_cidr"
+# Insert at an incrementing position so rules land ABOVE docker's default RETURN
+# in the intended order: the ACCEPTs first, then the DROPs. Idempotent — a
+# re-run finds the rule already present and is a no-op rather than a duplicate.
+POS=1
+add_rule() {  # $1=ACCEPT|DROP  $2=cidr
+  if in_netns iptables -w -C DOCKER-USER -d "$2" -j "$1" 2>/dev/null; then
+    log "already set $1 -> $2"
     return 0
   fi
-  in_netns iptables -w -I DOCKER-USER 1 -d "$_cidr" -j DROP \
-    || fail "could not install DROP rule for $_cidr"
-  log "deny egress -> $_cidr"
+  in_netns iptables -w -I DOCKER-USER "$POS" -d "$2" -j "$1" \
+    || fail "could not install $1 rule for $2"
+  POS=$((POS + 1))
+  log "$1 egress -> $2"
 }
-for cidr in $INTERNAL_CIDRS; do
-  add_drop "$cidr"
-done
+for cidr in $ALLOW_CIDRS; do add_rule ACCEPT "$cidr"; done
+for cidr in $PRIVATE_CIDRS; do add_rule DROP "$cidr"; done
 
-log "egress firewall active: internal ranges + metadata denied, internet OPEN"
+log "egress firewall active: private ranges + metadata denied (own bridge/uplink allowed), internet OPEN"
