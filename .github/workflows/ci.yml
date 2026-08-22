@@ -78,12 +78,31 @@ jobs:
           fi
           echo "banned-terms guard: clean"
 
+  # Dry-run resolve the image's PyPI manifest BEFORE any docker build. The image
+  # pins every first-party package independently in docker/pypi-requirements.txt,
+  # so the file can drift into an INTERNALLY inconsistent set: a stale core pin
+  # (e.g. tai42-contract==4.0.0) against a newer plugin (tai42-sandbox-docker==1.0.0,
+  # which requires contract>=4.1,<5 + kit>=3.6,<4) is unsatisfiable. That clash is
+  # otherwise only discovered deep inside the Dockerfile's pip install — a slow,
+  # confusing red image build. Resolving the manifest here fails fast and loud on
+  # any conflicting/unsatisfiable pin, and build-smoke is gated on it so a stale or
+  # self-contradicting manifest can never reach the image build.
+  resolve-manifest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Dry-run resolve docker/pypi-requirements.txt against PyPI
+        run: uv pip compile --quiet docker/pypi-requirements.txt -o /dev/null
+
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
   # `siblings` build context does not exist here. SOURCE=pypi therefore requires
   # every first-party tai42-* package to already be published to PyPI. The built
-  # image is saved and handed to the kind job so it is built once.
+  # image is saved and handed to the kind job so it is built once. Gated on
+  # resolve-manifest so the manifest is proven satisfiable before the build.
   build-smoke:
+    needs: resolve-manifest
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
