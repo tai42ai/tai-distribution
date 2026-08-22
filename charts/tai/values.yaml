@@ -456,11 +456,26 @@ sandbox:
       pullPolicy: IfNotPresent
 
     # The engine pod's OWN security posture — isolated to it, never applied to the
-    # app pods. Rootless-dind needs SYS_ADMIN (to create its inner user/net
-    # namespaces) and an unconfined seccomp profile; where the cluster offers a
-    # sandboxed runtime (sysbox / gVisor) prefer `runtimeClassName` and drop
-    # SYS_ADMIN. This privilege is the deliberate, isolated cost of an in-cluster
-    # sandbox and lives ONLY on this pod.
+    # app pods. dockerd runs ROOTLESS (uid 1000) via rootlesskit, but rootlesskit
+    # must create a nested user/net namespace and program the inner bridge (sysfs
+    # mount + tap0); in a container that setup needs `privileged: true` — WITHOUT it
+    # the rootless daemon never boots (docker's own dind-rootless requirement). So
+    # the CONTAINER is privileged and seccomp/AppArmor are unconfined for the nested
+    # userns + inner-bridge iptables; the DAEMON stays rootless, so inner sessions
+    # remain rootless-contained. `privileged` does NOT widen what an inner SESSION
+    # can reach — the network split (sandbox-networkpolicy.yaml) and the in-pod
+    # egress firewall (sandbox-firewall-configmap.yaml, installed by the privileged
+    # root sidecar below) enforce that. SYS_ADMIN is redundant under privileged but
+    # kept explicit. Where the cluster offers a sandboxed runtime (sysbox / gVisor)
+    # prefer `runtimeClassName`, drop `privileged`/SYS_ADMIN, and let the runtime
+    # provide the isolation. This privilege lives ONLY on this pod.
+    #
+    # NODE PREREQUISITE: `privileged: true` lets rootlesskit create the nested
+    # userns with no node sysctl change on a stock node — the AppArmor
+    # unprivileged-userns gate does not apply inside a privileged container. A node
+    # with a hardened/custom AppArmor policy that additionally mediates the
+    # container's rootlesskit path can still need a `userns` allowance (node
+    # hardening, not the norm).
     podSecurityContext:
       runAsNonRoot: true
       runAsUser: 1000
@@ -469,14 +484,34 @@ sandbox:
     securityContext:
       runAsNonRoot: true
       runAsUser: 1000
+      privileged: true
       allowPrivilegeEscalation: true
       capabilities:
         add:
           - SYS_ADMIN
       seccompProfile:
         type: Unconfined
+      # k8s 1.30+ native AppArmor field (equivalent of the compose engine's
+      # `apparmor=unconfined`), so the nested userns + inner-bridge iptables are not
+      # mediated by the node's default container AppArmor profile.
+      appArmorProfile:
+        type: Unconfined
+    # The privileged ROOT firewall sidecar's OWN security posture. The engine
+    # container runs rootless (uid 1000) and so CANNOT `nsenter -n` into dockerd's
+    # rootless netns to program DOCKER-USER; this sidecar runs as privileged root and
+    # — with the pod's shareProcessNamespace — sees dockerd's pid, so its nsenter
+    # works. It installs the SAME egress firewall the compose engine's root entrypoint
+    # does. Isolated to this pod.
+    firewallSidecarSecurityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+      privileged: true
+      seccompProfile:
+        type: Unconfined
+      appArmorProfile:
+        type: Unconfined
     # Optional sandboxed RuntimeClass (sysbox / gVisor). When set the operator can
-    # additionally drop SYS_ADMIN above — the runtime provides the isolation.
+    # additionally drop `privileged`/SYS_ADMIN above — the runtime provides the isolation.
     runtimeClassName: ""
 
     # The daemon data-root the durable workspace store is mounted at. ROOTLESS dind
@@ -503,6 +538,15 @@ sandbox:
         memory: 512Mi
       limits:
         memory: 2Gi
+
+    # The firewall sidecar installs the DOCKER-USER rules once, then idles; it needs
+    # almost nothing.
+    firewallSidecarResources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 64Mi
 
     # Engine-pod egress NetworkPolicy (§ builtin only). All inner-session traffic
     # NAT's out through the engine pod, so restricting the ENGINE POD's egress

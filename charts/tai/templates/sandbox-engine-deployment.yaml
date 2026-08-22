@@ -13,13 +13,23 @@ The daemon reads the chart-generated SERVER cert/key/CA explicitly (no auto-gen)
 the cert trust is deterministic at render time. A single-replica, RWO durable PVC
 holds the workspace store, so the strategy is Recreate.
 
+Engine posture: the CONTAINER is privileged so rootlesskit can create its nested
+user/net namespaces and program the inner bridge (docker's dind-rootless requirement);
+the DAEMON still runs ROOTLESS (uid 1000), so inner sessions stay rootless-contained.
+Privilege does NOT widen what a session can reach — the network split + egress firewall
+below do that. See values.yaml sandbox.engine for the node userns prerequisite.
+
 Inner-session isolation: a session is an inner container of the rootless-dind
 daemon, on dind's private inner bridge, NAT'd out through THIS pod's network
 namespace — so restricting this pod's egress confines the sessions. TWO layers do
 that for builtin: the k8s egress NetworkPolicy (sandbox-networkpolicy.yaml, the
-cluster-native layer) AND this pod's own in-pod dind-netns egress firewall (the
-container command backgrounds it at daemon start; see sandbox-firewall-configmap.yaml)
-— the CNI-INDEPENDENT backstop, since NetworkPolicy `ipBlock` egress is CNI-dependent.
+cluster-native layer) AND this pod's own in-pod dind-netns egress firewall — the
+CNI-INDEPENDENT backstop, since NetworkPolicy `ipBlock` egress is CNI-dependent.
+The firewall programs DOCKER-USER inside dockerd's rootless netns via `nsenter -n`,
+which needs root over the rootlesskit child userns — the rootless engine container
+(uid 1000) cannot do it. So a PRIVILEGED ROOT SIDECAR (with pod shareProcessNamespace,
+so it sees dockerd's pid) installs it, mirroring the compose engine's root entrypoint;
+see sandbox-firewall-configmap.yaml.
 */ -}}
 {{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") (eq .Values.sandbox.engine.mode "builtin") }}
 {{- if not .Values.sandbox.engine.internalCIDRs }}
@@ -50,6 +60,11 @@ spec:
     spec:
       # No RBAC — the engine calls no Kubernetes API.
       automountServiceAccountToken: false
+      # Shared PID namespace so the privileged firewall sidecar sees the rootless
+      # dockerd process and can `nsenter -n` into its netns to program DOCKER-USER
+      # (the engine container is rootless and cannot). Mirrors the compose engine,
+      # where a single root entrypoint nsenters into the same-container dockerd.
+      shareProcessNamespace: true
       {{- with .Values.sandbox.engine.runtimeClassName }}
       runtimeClassName: {{ . | quote }}
       {{- end }}
@@ -71,18 +86,16 @@ spec:
                    so the mTLS trust is deterministic and shares the client bundle's CA. */}}
             - name: DOCKER_TLS_CERTDIR
               value: ""
-          {{- /* Background the in-pod dind egress firewall, THEN exec the stock rootless
-                 entrypoint (rootlesskit + dockerd) with the dockerd args below. The firewall
-                 waits for dockerd, nsenters into the daemon netns, and installs the
-                 DOCKER-USER DROP rules before the app dials the control API — the
-                 CNI-independent backstop to the egress NetworkPolicy. Mirrors the compose
-                 engine's entrypoint (compose/docker-compose.yml sandbox-engine). $@ carries
-                 the args below through to dockerd-entrypoint.sh. */}}
+          {{- /* Just exec the stock rootless entrypoint (rootlesskit + dockerd) with the
+                 dockerd args below; $@ carries the args through to dockerd-entrypoint.sh.
+                 The egress firewall is NOT installed here — the engine container is rootless
+                 (uid 1000) and cannot nsenter into its own rootless netns as root. The
+                 privileged root firewall sidecar below installs it instead (via the pod's
+                 shared PID namespace), mirroring the compose engine's ROOT entrypoint. */}}
           command:
             - sh
             - -c
             - |
-              /sandbox-firewall/dind-egress-firewall.sh &
               exec dockerd-entrypoint.sh "$@"
             - sh
           args:
@@ -115,15 +128,40 @@ spec:
             - name: server-certs
               mountPath: /sandbox-server-certs
               readOnly: true
-            {{- /* In-pod dind egress firewall init, RO. The command above backgrounds
-                   it before exec'ing dockerd — see sandbox-firewall-configmap.yaml. */}}
-            - name: firewall
-              mountPath: /sandbox-firewall
-              readOnly: true
             {{- /* Rootless dind keeps images/volumes under the rootless user's home,
                    so the durable store mounts at the daemon's data-root there. */}}
             - name: engine-data
               mountPath: {{ .Values.sandbox.engine.dataDir | quote }}
+        {{- /* Privileged ROOT egress-firewall sidecar. The engine container is rootless
+               (uid 1000) and cannot nsenter into dockerd's rootless netns as root; this
+               sidecar runs privileged as uid 0 and — via the pod's shareProcessNamespace —
+               sees dockerd's pid, so its `nsenter -n` into the daemon netns works. It runs
+               the SAME script the compose engine's root entrypoint runs, installing the
+               DOCKER-USER rules before the app dials the control API (the CNI-independent
+               backstop to the egress NetworkPolicy). Same image as the engine so nsenter +
+               iptables are present. The script fails LOUDLY on any error (isolation is
+               load-bearing), so `set -e` propagates a failed install as a non-zero exit —
+               the sidecar crash-loops visibly rather than idling with sessions unconfined;
+               on success it idles so the container stays Running. */}}
+        - name: firewall
+          image: "{{ .Values.sandbox.engine.image.repository }}:{{ .Values.sandbox.engine.image.tag }}"
+          imagePullPolicy: {{ .Values.sandbox.engine.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.sandbox.engine.firewallSidecarSecurityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              /sandbox-firewall/dind-egress-firewall.sh
+              exec sleep infinity
+          resources:
+            {{- toYaml .Values.sandbox.engine.firewallSidecarResources | nindent 12 }}
+          volumeMounts:
+            {{- /* In-pod dind egress firewall init, RO — see sandbox-firewall-configmap.yaml. */}}
+            - name: firewall
+              mountPath: /sandbox-firewall
+              readOnly: true
       volumes:
         - name: server-certs
           secret:

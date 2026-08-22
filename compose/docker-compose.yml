@@ -547,6 +547,31 @@ services:
   # the dind egress firewall (below), and mTLS on the control API ENFORCE this
   # deny-by-default; PLAN_5's negative test confirms it.
   #
+  # ENGINE POSTURE — privileged CONTAINER, ROOTLESS daemon, root-installed firewall.
+  # dockerd itself runs ROOTLESS (uid 1000) via rootlesskit, so inner sessions stay
+  # rootless-contained. But rootlesskit must create a nested user namespace and
+  # program the inner bridge (vpnkit tap0 + iptables); in a container that setup
+  # needs `privileged: true` — WITHOUT it rootlesskit cannot mount sysfs or create
+  # tap0 and the daemon never boots (docker's own dind-rootless requirement). So the
+  # CONTAINER is privileged and the ENTRYPOINT starts as root (`user: "0:0"`); the
+  # DAEMON is then dropped back to the rootless user (`su rootless -c
+  # dockerd-entrypoint.sh`). `privileged` makes the CONTAINER privileged; dockerd
+  # inside stays rootless. Privilege does NOT widen what an inner SESSION can reach:
+  # session isolation is enforced by the `sandbox-ctrl` NETWORK SPLIT and the
+  # INNER-BRIDGE EGRESS FIREWALL below, NOT by the container's privilege level.
+  #
+  # Why root for the firewall: the installer programs DOCKER-USER inside dockerd's
+  # rootless netns via `nsenter -n`, which needs CAP_SYS_ADMIN over the rootlesskit
+  # CHILD userns that owns that netns — the rootless user (uid 1000) does NOT have
+  # it. So the firewall runs as root (the root entrypoint), then the daemon drops to
+  # rootless. Only the firewall install is root; dockerd is rootless.
+  #
+  # NODE PREREQUISITE: `privileged: true` lets rootlesskit create the nested userns
+  # with NO host sysctl change on a stock host (the AppArmor unprivileged-userns gate
+  # does not apply inside a privileged container). A host with a hardened/custom
+  # AppArmor policy that additionally mediates the container's rootlesskit path can
+  # still need a `userns` allowance (host hardening, not the norm).
+  #
   # DURABLE BLOCK STORE (reciprocal dependency): PLAN_3 creates/adopts the
   # persistent tai-sbx-<workspace_key> volumes ON this engine; they are docker
   # volumes INSIDE this daemon, so they physically live in its /var/lib/docker
@@ -556,10 +581,11 @@ services:
   # on. Ephemeral sessions ride anonymous inner volumes that die with their
   # container (no durable footprint).
   #
-  # BUILD-TIME RE-VERIFY (STOP-and-surface, never a privileged fallback): confirm
-  # the pinned rootless image can BOTH self-generate the client certs AND program
-  # its own inner-bridge firewall on the target host; if it cannot, stop and
-  # surface — the sysbox/gVisor runtime is the documented hardening path.
+  # BUILD-TIME RE-VERIFY (STOP-and-surface): confirm the pinned rootless image can
+  # BOTH self-generate the client certs AND program its own inner-bridge firewall on
+  # the target host (the privileged container + root-installed firewall posture in
+  # the block above); if it cannot, stop and surface — the sysbox/gVisor runtime is
+  # the documented hardening path.
   sandbox-engine:
     # tag 28-dind-rootless, pinned by digest so the engine base cannot float
     # across a pull. Refresh the digest when moving to a newer docker 28.x.
@@ -573,11 +599,19 @@ services:
     # bound convention); size for the concurrent session load you expect.
     mem_limit: 2048m
     cpus: 2.0
-    # Documented rootless-dind posture (NOT --privileged): the nested user
-    # namespace + inner-bridge iptables need seccomp/apparmor unconfined on the
-    # ENGINE container only — the app services keep their posture untouched. If
-    # the pinned image needs more than this on your host, STOP and surface (see
-    # the header); the sysbox/gVisor runtime is the documented hardening path.
+    # The CONTAINER is privileged so rootlesskit can create the nested userns and
+    # program the inner bridge (sysfs mount + tap0). dockerd still runs ROOTLESS
+    # inside; session isolation is network+firewall enforced (see header block),
+    # so this does not weaken the isolation invariant.
+    privileged: true
+    # Run the ENTRYPOINT as root so the egress-firewall installer can `nsenter -n`
+    # into dockerd's rootless netns (needs CAP_SYS_ADMIN over the rootlesskit child
+    # userns). The daemon itself is dropped back to the rootless user in the
+    # entrypoint (`su rootless -c dockerd-entrypoint.sh`), so dockerd stays ROOTLESS.
+    user: "0:0"
+    # The nested user namespace + inner-bridge iptables need seccomp/apparmor
+    # unconfined on the ENGINE container only — the app services keep their posture
+    # untouched.
     security_opt:
       - seccomp=unconfined
       - apparmor=unconfined
@@ -602,17 +636,20 @@ services:
       # inner bridge's DOCKER-USER chain at daemon start, before any session
       # create — deployment-internal ranges + metadata denied, internet OPEN.
       - ./sandbox/dind-egress-firewall.sh:/usr/local/bin/dind-egress-firewall.sh:ro
-    # Program the inner-bridge egress firewall, then exec the stock rootless
-    # entrypoint (rootlesskit + dockerd). The firewall backgrounds itself, waits
-    # for dockerd to create DOCKER-USER, and installs the deny rules; the app
-    # only dials the control API after the daemon is up, so the rules are in
-    # place before the first session create succeeds.
+    # Install the inner-bridge egress firewall as ROOT (this entrypoint runs as
+    # root via `user: "0:0"`; the firewall `nsenter -n`s into dockerd's rootless
+    # netns), then DROP the daemon back to the rootless user via
+    # `su rootless -c dockerd-entrypoint.sh`. The firewall backgrounds itself and
+    # waits for dockerd to create DOCKER-USER before installing the rules; the app
+    # only dials the control API after the daemon is up, so the rules are in place
+    # before the first session create succeeds. `exec` inside `su` so signals reach
+    # dockerd; DOCKER_TLS_CERTDIR is re-exported because `su` resets the environment.
     entrypoint:
       - sh
       - -c
       - |
         /usr/local/bin/dind-egress-firewall.sh &
-        exec dockerd-entrypoint.sh "$@"
+        exec su rootless -c 'DOCKER_TLS_CERTDIR=/certs exec dockerd-entrypoint.sh'
       - sh
     # Ready when the daemon answers over its TLS socket, using the client certs
     # it generated into /certs/client. Generous start_period covers first-boot

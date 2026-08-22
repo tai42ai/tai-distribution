@@ -200,10 +200,18 @@ holder**: a deployment installs EXACTLY ONE provider in its manifest
   engine. `engine.mode`:
   - `builtin` (default when enabled) — the chart deploys a **rootless-dind engine**
     as a **separate** Deployment (never a sidecar; the app pods' hardened
-    `securityContext` is untouched). The engine carries its own isolated privilege
-    (`SYS_ADMIN`, unconfined seccomp) — the deliberate cost of an in-cluster sandbox;
-    where a sandboxed RuntimeClass (**sysbox / gVisor**) is available, set
-    `engine.runtimeClassName` and drop `SYS_ADMIN`. The chart also provisions the
+    `securityContext` is untouched). The engine **container is privileged** so
+    rootlesskit can create its nested user/net namespaces and program the inner
+    bridge (docker's dind-rootless requirement — without it the daemon never boots);
+    the **daemon still runs rootless** (uid 1000), so inner sessions stay
+    rootless-contained, and privilege does not widen what a session can reach (the
+    network split + egress firewall do that). This isolated privilege — the
+    deliberate cost of an in-cluster sandbox — lives ONLY on this pod. The node must
+    permit rootlesskit's nested userns; `privileged` covers this on a stock node with
+    no sysctl change (a hardened/custom node AppArmor policy mediating the rootlesskit
+    path can still need a `userns` allowance). Where a sandboxed RuntimeClass
+    (**sysbox / gVisor**) is available, set `engine.runtimeClassName` and drop
+    `privileged`/`SYS_ADMIN`. The chart also provisions the
     durable workspace **PVC** (mounted at the engine's data-root — rootless dind
     keeps its store under the rootless user's home, not `/var/lib/docker`), the
     **egress NetworkPolicy**, and the **mTLS certs**.
@@ -244,8 +252,13 @@ EXCEPT those cluster-internal ranges and cloud metadata (empty **fails the rende
 rather than shipping an engine whose sessions can reach the whole internal network),
 and allows DNS on `:53` to `engine.dnsCIDRs`. NetworkPolicy `ipBlock` enforcement is
 CNI-dependent, so the engine pod also programs its own dind-netns egress firewall (a
-chart ConfigMap script the engine container runs at daemon start) as the
-CNI-independent backstop — both layers ship for builtin.
+chart ConfigMap script) as the CNI-independent backstop — both layers ship for
+builtin. That firewall must `nsenter` into dockerd's rootless netns as root, which
+the rootless engine container cannot do, so a **privileged root sidecar** (with the
+pod's `shareProcessNamespace`, so it sees the dockerd pid) installs it — mirroring
+the compose engine's root entrypoint. The script allows the daemon's own bridge/
+uplink subnets first, then DROPs the full private + link-local space (10/8, 172.16/12,
+192.168/16, 169.254/16), leaving the public internet open.
 
 ## Upgrading
 
@@ -436,8 +449,9 @@ enabling any of them brings that connection up.
 | `sandbox.provider` | `docker` | `docker` (container) or `local` (direct/host) — must match the manifest `sandbox_module`; mutually exclusive |
 | `sandbox.engine.mode` | `builtin` | `builtin` (chart deploys a rootless-dind engine) or `external` (connect to `external.endpoint`) |
 | `sandbox.engine.image.*` | `docker:28-dind-rootless@sha256:…` | rootless-dind engine image (digest-pinned) |
-| `sandbox.engine.podSecurityContext` / `.securityContext` | rootless-dind (`SYS_ADMIN`, unconfined seccomp) | engine-pod posture — isolated to the engine, never the app pods |
-| `sandbox.engine.runtimeClassName` | `""` | optional sandboxed RuntimeClass (sysbox / gVisor); lets the operator drop `SYS_ADMIN` |
+| `sandbox.engine.podSecurityContext` / `.securityContext` | privileged container, unconfined seccomp/AppArmor; rootless daemon (uid 1000) | engine-pod posture — isolated to the engine, never the app pods |
+| `sandbox.engine.firewallSidecarSecurityContext` | privileged root (uid 0) | the egress-firewall sidecar's posture — nsenters into dockerd's rootless netns to program DOCKER-USER |
+| `sandbox.engine.runtimeClassName` | `""` | optional sandboxed RuntimeClass (sysbox / gVisor); lets the operator drop `privileged` / `SYS_ADMIN` |
 | `sandbox.engine.dataDir` | `/home/rootless/.local/share/docker` | daemon data-root the durable workspace PVC mounts at (rootless dind's store) |
 | `sandbox.engine.persistence.*` | `10Gi` / `""` / `ReadWriteOnce` | durable workspace PVC (pick a node-independent StorageClass) |
 | `sandbox.engine.internalCIDRs` | `[]` | **required** in builtin mode — cluster-internal CIDRs the engine-pod egress NetworkPolicy denies (empty fails the render) |
