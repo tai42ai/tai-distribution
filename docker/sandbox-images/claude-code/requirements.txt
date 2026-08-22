@@ -1,0 +1,6 @@
+# Single source of the claude-agent-sdk pin. The sandbox session image and the
+# server-side plugin install the SDK at the SAME version; a review checks the
+# two match. The wheel bundles the real Claude Code CLI (`claude` binary) — no
+# separate Node.js runtime is installed. Multi-arch manylinux wheels
+# (aarch64 + x86_64), Python 3.10+.
+claude-agent-sdk==0.2.144

@@ -1,0 +1,28 @@
+{{- /*
+In-pod dind egress firewall init for the built-in engine (container mode,
+engine.mode=builtin). The engine pod runs this script at daemon start, BEFORE any
+inner session can be created: it waits for dockerd, nsenters into the daemon's
+network namespace, and installs top-of-chain DROP rules in DOCKER-USER for the
+deployment-internal ranges + link-local/metadata (egress otherwise OPEN).
+
+This is the CNI-INDEPENDENT backstop to the k8s NetworkPolicy (sandbox-networkpolicy.yaml):
+NetworkPolicy egress `ipBlock` enforcement is CNI-dependent, so the two layers are
+BOTH shipped for builtin — the in-pod firewall confines inner-session egress even on
+a CNI that does not enforce the policy.
+
+The script body is loaded verbatim from files/dind-egress-firewall.sh, which is
+byte-identical to compose/sandbox/dind-egress-firewall.sh — the single reference
+implementation the compose stack mounts into its engine. Keep the two files identical.
+*/ -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") (eq .Values.sandbox.engine.mode "builtin") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tai.sandbox.engineName" . }}-firewall
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-engine
+data:
+  dind-egress-firewall.sh: |
+    {{- .Files.Get "files/dind-egress-firewall.sh" | nindent 4 }}
+{{- end }}

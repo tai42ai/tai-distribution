@@ -1,0 +1,158 @@
+{{- /*
+Built-in sandbox engine (container mode, engine.mode=builtin). A SEPARATE workload
+from the app pods — NOT a sidecar — so the app pods' hardened securityContext
+(readOnlyRootFilesystem, drop ALL, non-root) stays untouched. The privilege
+rootless-dind needs to create its inner user/net namespaces (SYS_ADMIN, unconfined
+seccomp) is isolated to THIS pod; where a sandboxed RuntimeClass (sysbox / gVisor)
+is available the operator sets engine.runtimeClassName and can drop SYS_ADMIN.
+
+The engine serves the mTLS control API on :2376 to serve + backend (which reach it
+via the ClusterIP Service below and present the chart-generated client certs). It
+is granted NO Kubernetes RBAC: it spawns inner dind containers, not k8s objects.
+The daemon reads the chart-generated SERVER cert/key/CA explicitly (no auto-gen), so
+the cert trust is deterministic at render time. A single-replica, RWO durable PVC
+holds the workspace store, so the strategy is Recreate.
+
+Inner-session isolation: a session is an inner container of the rootless-dind
+daemon, on dind's private inner bridge, NAT'd out through THIS pod's network
+namespace — so restricting this pod's egress confines the sessions. TWO layers do
+that for builtin: the k8s egress NetworkPolicy (sandbox-networkpolicy.yaml, the
+cluster-native layer) AND this pod's own in-pod dind-netns egress firewall (the
+container command backgrounds it at daemon start; see sandbox-firewall-configmap.yaml)
+— the CNI-INDEPENDENT backstop, since NetworkPolicy `ipBlock` egress is CNI-dependent.
+*/ -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") (eq .Values.sandbox.engine.mode "builtin") }}
+{{- if not .Values.sandbox.engine.internalCIDRs }}
+{{- fail "sandbox.engine.internalCIDRs is required when sandbox.enabled and engine.mode=builtin — supply the cluster-internal CIDRs the engine's egress NetworkPolicy denies (pod/service/node ranges); shipping an engine whose sessions can reach the whole internal network is refused, not silently defaulted" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tai.sandbox.engineName" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-engine
+spec:
+  # One engine holding a ReadWriteOnce durable store — never two pods on the claim
+  # at once, so replace on rollout rather than surging a second mounter.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sandbox-engine
+  template:
+    metadata:
+      labels:
+        {{- include "tai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sandbox-engine
+    spec:
+      # No RBAC — the engine calls no Kubernetes API.
+      automountServiceAccountToken: false
+      {{- with .Values.sandbox.engine.runtimeClassName }}
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.sandbox.engine.podSecurityContext | nindent 8 }}
+      containers:
+        - name: sandbox-engine
+          image: "{{ .Values.sandbox.engine.image.repository }}:{{ .Values.sandbox.engine.image.tag }}"
+          imagePullPolicy: {{ .Values.sandbox.engine.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.sandbox.engine.securityContext | nindent 12 }}
+          env:
+            {{- /* Empty disables the entrypoint's cert auto-generation; the daemon
+                   reads the chart-generated server certs via the explicit flags below,
+                   so the mTLS trust is deterministic and shares the client bundle's CA. */}}
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          {{- /* Background the in-pod dind egress firewall, THEN exec the stock rootless
+                 entrypoint (rootlesskit + dockerd) with the dockerd args below. The firewall
+                 waits for dockerd, nsenters into the daemon netns, and installs the
+                 DOCKER-USER DROP rules before the app dials the control API — the
+                 CNI-independent backstop to the egress NetworkPolicy. Mirrors the compose
+                 engine's entrypoint (compose/docker-compose.yml sandbox-engine). $@ carries
+                 the args below through to dockerd-entrypoint.sh. */}}
+          command:
+            - sh
+            - -c
+            - |
+              /sandbox-firewall/dind-egress-firewall.sh &
+              exec dockerd-entrypoint.sh "$@"
+            - sh
+          args:
+            - --host=tcp://0.0.0.0:2376
+            - --tlsverify
+            - --tlscacert=/sandbox-server-certs/ca.pem
+            - --tlscert=/sandbox-server-certs/cert.pem
+            - --tlskey=/sandbox-server-certs/key.pem
+          ports:
+            - name: dockerd
+              containerPort: 2376
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: dockerd
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: dockerd
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.sandbox.engine.resources | nindent 12 }}
+          volumeMounts:
+            - name: server-certs
+              mountPath: /sandbox-server-certs
+              readOnly: true
+            {{- /* In-pod dind egress firewall init, RO. The command above backgrounds
+                   it before exec'ing dockerd — see sandbox-firewall-configmap.yaml. */}}
+            - name: firewall
+              mountPath: /sandbox-firewall
+              readOnly: true
+            {{- /* Rootless dind keeps images/volumes under the rootless user's home,
+                   so the durable store mounts at the daemon's data-root there. */}}
+            - name: engine-data
+              mountPath: {{ .Values.sandbox.engine.dataDir | quote }}
+      volumes:
+        - name: server-certs
+          secret:
+            secretName: {{ include "tai.sandbox.serverCertSecretName" . }}
+        - name: firewall
+          configMap:
+            name: {{ include "tai.sandbox.engineName" . }}-firewall
+            # Executable: the container command runs the script directly (mirrors the
+            # compose mount's execute bit), so dockerd-entrypoint stays untouched.
+            defaultMode: 0555
+        - name: engine-data
+          persistentVolumeClaim:
+            claimName: {{ include "tai.sandbox.engineName" . }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tai.sandbox.engineName" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-engine
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "tai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-engine
+  ports:
+    - name: dockerd
+      port: 2376
+      targetPort: dockerd
+      protocol: TCP
+{{- end }}

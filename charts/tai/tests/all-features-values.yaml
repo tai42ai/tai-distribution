@@ -39,3 +39,16 @@ backend:
   type: arq
   celery:
     brokerUrl: "amqp://tai:parity@rabbitmq.example.com:5672//"
+
+# Sandbox ON so tai.commonEnv emits BOTH provider connection keys
+# (SANDBOX_DOCKER_HOST + SANDBOX_LOCAL_ROOT) into the app pod env. external mode
+# avoids standing up the dind engine in a pure `helm template` parity render while
+# still emitting both env keys; the client cert Secret is a volume mount, so no cert
+# key lands in the pod env.
+sandbox:
+  enabled: true
+  engine:
+    mode: external
+  external:
+    endpoint: "tcp://sandbox-engine.example.com:2376"
+    clientCertSecret: "sandbox-client-certs-external"

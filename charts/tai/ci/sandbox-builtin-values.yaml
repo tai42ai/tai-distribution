@@ -1,0 +1,17 @@
+# ci fixture: sandbox — built-in engine (container mode).
+# Exercises the full built-in render path: the rootless-dind engine Deployment +
+# ClusterIP Service, the chart-generated mTLS cert Secrets, the durable workspace
+# PVC, the engine-pod egress NetworkPolicy, the in-pod dind egress firewall
+# ConfigMap, and SANDBOX_DOCKER_HOST wired to the engine's in-cluster service. internalCIDRs is REQUIRED in builtin mode (empty
+# fails the render), so it is supplied here.
+sandbox:
+  enabled: true
+  provider: docker
+  engine:
+    mode: builtin
+    internalCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+    dnsCIDRs:
+      - 10.96.0.0/12

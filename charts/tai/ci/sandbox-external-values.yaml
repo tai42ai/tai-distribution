@@ -1,0 +1,14 @@
+# ci fixture: sandbox — external engine (container mode).
+# Connects to an operator-run engine at external.endpoint; the chart provisions no
+# engine, PVC, cert Secret, or NetworkPolicy. The operator's client cert Secret is
+# mounted read-only into serve + backend at /certs/client, and SANDBOX_DOCKER_HOST
+# is wired to the external endpoint. Empty external.endpoint / clientCertSecret
+# would fail the render (required, no silent default).
+sandbox:
+  enabled: true
+  provider: docker
+  engine:
+    mode: external
+  external:
+    endpoint: "tcp://sandbox-engine.example.com:2376"
+    clientCertSecret: "sandbox-client-certs-external"

@@ -100,6 +100,68 @@ The two work together: the prefix keeps the installed **code**, the manifest
 keeps its **registration**. Persist only one and a recreated container boots
 with the halves out of sync.
 
+### Sandbox (optional)
+
+The sandbox runs agent code in an isolated per-session workspace. It is **off by
+default** — baking a provider does not turn it on; a deployment enables it by
+naming a provider in the manifest (`sandbox_module`) and wiring that provider's
+connection env. The provider is a scalar single-instance holder, so a deployment
+picks **exactly one** of two mutually exclusive modes:
+
+- **Container mode (`sandbox_module: tai42_sandbox_docker`).** Each session is an
+  isolated container created by a sandbox engine over an mTLS control API. The
+  app talks only to the engine (`SANDBOX_DOCKER_HOST`) — never the docker socket,
+  and the app pod keeps its hardened, non-root, read-only-rootfs posture. A
+  session is an inner container of the rootless engine on its own private bridge,
+  NAT'd out for internet egress and reachable to nothing else of the deployment;
+  it is not on any deployment network and holds no control-API client cert.
+  Egress is **open by default** (README posture): the engine's egress firewall
+  allows the public internet and DNS and denies only the deployment-internal
+  ranges and cloud metadata — it is not an Anthropic-only allowlist. Persistent
+  workspaces are durable only when the engine's block store is provisioned (a
+  named volume / PVC on node-independent storage); an ephemeral session leaves no
+  durable footprint.
+- **Direct/host mode (`sandbox_module: tai42_sandbox_local`).** No engine, no
+  certs, no session image: the agent's code runs **directly on the host** — the
+  serve/backend process itself — with **NO isolation**. The workspace is the host
+  directory `<SANDBOX_LOCAL_ROOT>/<workspace_key>`, so `SANDBOX_LOCAL_ROOT` must
+  resolve to provisioned, persistent storage (a volume / PVC mounted into
+  serve+backend) for a persistent workspace to survive a restart or node move.
+  Running the coding agent in direct mode is an **operator prerequisite**: the
+  operator installs the coding runtime on the host — the `claude-agent-sdk` wheel,
+  which bundles the Claude Code CLI (no separate Node.js) — at the **same pinned
+  SDK version** the session image carries (below); a version mismatch is a hard
+  stop, never an improvised substitute. The base server image deliberately omits
+  it to stay lean.
+
+**Session images (container mode).** Two pinned images ship on the release lane,
+each multi-arch, SBOM- and provenance-attested, trivy-gated before push, and
+cosign-keyless-signed:
+
+| Image | Carries | Wired by |
+|---|---|---|
+| `ghcr.io/tai42ai/tai-sandbox-claude-code` | `claude-agent-sdk` + its bundled `claude` CLI (no runner code, no credentials) | `TAI_AGENTS_CLAUDE_SESSION_IMAGE` |
+| `ghcr.io/tai42ai/tai-sandbox-exec` | lean `sh` + `python3` + coreutils only (no SDK, no runner code, no credentials) | the `langchain_deep_agent` group's own `session_image` setting |
+
+Both are **consumed by digest, never by a bare tag** — every reference is the
+`…@sha256:…` form, and the intended pull posture is cosign signature
+verification:
+
+```sh
+# In .env / the manifest — pin the exact digest, not a moving tag:
+TAI_AGENTS_CLAUDE_SESSION_IMAGE=ghcr.io/tai42ai/tai-sandbox-claude-code@sha256:<digest>
+```
+
+The claude session image carries the SDK and its bundled `claude` binary and
+**nothing consumer-specific**: no runner code (the adapter materializes the
+runner payload per turn under `/workspace/.runner`, so one published digest stays
+plugin-version-agnostic) and no credentials — the chosen operator credential
+(`TAI_AGENTS_CLAUDE_API_KEY` **or** `TAI_AGENTS_CLAUDE_OAUTH_TOKEN`, exactly one)
+is injected into the session at runtime, never baked. The **SDK pin has a single
+source**: `docker/sandbox-images/claude-code/requirements.txt`. The server-side
+plugin pins the SDK to the same version, and direct/host mode installs that same
+version on the host.
+
 ## Upgrading
 
 Moving a deployment to a new release is three steps: pull the new image tag,

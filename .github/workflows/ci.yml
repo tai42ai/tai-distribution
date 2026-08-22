@@ -19,16 +19,26 @@ env:
   IMAGE_REF: tai-ci:${{ github.sha }}
 
 jobs:
-  # Dockerfile lint. The Dockerfile uses the docker/dockerfile:1.7-labs frontend
+  # Dockerfile lint. Covers the release image AND the session images
+  # (sandbox-images/claude-code, sandbox-images/exec) — every shipped Dockerfile is
+  # gated. The release Dockerfile uses the docker/dockerfile:1.7-labs frontend
   # (COPY --exclude); hadolint must be new enough to parse that flag — v3.1.0's
   # hadolint (2.12.0) rejects it as an invalid flag, v3.3.0's (2.13.x) parses it.
+  # fail-fast off so every Dockerfile's findings surface, not just the first to fail.
   hadolint:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - docker/Dockerfile
+          - docker/sandbox-images/claude-code/Dockerfile
+          - docker/sandbox-images/exec/Dockerfile
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
-          dockerfile: docker/Dockerfile
+          dockerfile: ${{ matrix.dockerfile }}
 
   # Banned client/domain terms guard. The platform is generic: no client or
   # product name may appear in any tracked or newly added file (README,
@@ -205,6 +215,14 @@ jobs:
           version: v3.16.4
       - name: helm lint
         run: helm lint charts/tai
+      # The in-pod dind egress firewall is a security control shipped in two
+      # forced-duplicate copies: Helm cannot .Files.Get outside the chart dir, so
+      # the chart carries its own byte-for-byte copy of the compose reference.
+      # A silent drift would leave the k8s in-pod firewall weaker than the compose
+      # one, undetectably — assert the two are byte-identical (diff exits non-zero
+      # on any drift, failing CI).
+      - name: sandbox firewall byte-identity (chart == compose)
+        run: diff --unified charts/tai/files/dind-egress-firewall.sh compose/sandbox/dind-egress-firewall.sh
       # Template matrix — bare defaults plus each scenario fixture the chart ships
       # in its conventional ci/ values dir.
       - name: helm template matrix

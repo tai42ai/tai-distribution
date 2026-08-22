@@ -314,6 +314,20 @@ Emits a YAML list of env entries. Pass the root context.
       name: {{ include "tai.dbSecretName" . | quote }}
       key: {{ include "tai.dbSecretKey" . | quote }}
 {{- end }}
+{{/* Sandbox provider connection envs. Emitted TOGETHER when the feature is on:
+     the runtime `sandbox_module` (manifest) selects which provider reads its key,
+     but both keys coexist in the rendered pod env (chart-values scope, not runtime
+     scope), so the unselected provider's key renders empty/unused and harmless.
+     SANDBOX_DOCKER_HOST is the mTLS control endpoint of the built-in (ClusterIP
+     service) or external engine; SANDBOX_LOCAL_ROOT is the direct/host provider's
+     persistent workspace root. The mTLS client cert paths are a fixed VOLUME MOUNT
+     at /certs/client, NEVER env, so no cert value lands in the recycle-pinned env. */}}
+{{- if .Values.sandbox.enabled }}
+- name: SANDBOX_DOCKER_HOST
+  value: {{ include "tai.sandbox.dockerHost" . | quote }}
+- name: SANDBOX_LOCAL_ROOT
+  value: {{ .Values.sandbox.local.root | quote }}
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -598,5 +612,96 @@ non-root securityContext.
 {{- end }}
 - name: tmp
   mountPath: /tmp
+{{- end -}}
+
+{{/*
+Sandbox — built-in engine object names.
+*/}}
+{{- define "tai.sandbox.engineName" -}}
+{{- printf "%s-sandbox-engine" (include "tai.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Sandbox — the SANDBOX_DOCKER_HOST value: the built-in engine's ClusterIP service
+address, or the external endpoint (required when engine.mode=external — render
+fails on empty rather than dialing nothing).
+*/}}
+{{- define "tai.sandbox.dockerHost" -}}
+{{- if eq .Values.sandbox.engine.mode "external" -}}
+{{- required "sandbox.external.endpoint is required when sandbox.engine.mode=external" .Values.sandbox.external.endpoint -}}
+{{- else -}}
+{{- printf "tcp://%s:2376" (include "tai.sandbox.engineName" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Sandbox — the Secret holding the mTLS CLIENT bundle (cert.pem/key.pem/ca.pem)
+serve + backend mount read-only at /certs/client. External mode uses the operator's
+Secret (required); builtin mode uses the chart-generated client Secret.
+*/}}
+{{- define "tai.sandbox.clientCertSecretName" -}}
+{{- if eq .Values.sandbox.engine.mode "external" -}}
+{{- required "sandbox.external.clientCertSecret is required when sandbox.engine.mode=external" .Values.sandbox.external.clientCertSecret -}}
+{{- else -}}
+{{- printf "%s-sandbox-client-certs" (include "tai.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Sandbox — the Secret holding the mTLS SERVER bundle the built-in engine serves the
+control API with (chart-generated, same CA as the client bundle).
+*/}}
+{{- define "tai.sandbox.serverCertSecretName" -}}
+{{- printf "%s-sandbox-server-certs" (include "tai.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Sandbox — whether the direct/host provider mounts a persistent workspace volume at
+SANDBOX_LOCAL_ROOT into serve + backend (provider=local + persistence on).
+*/}}
+{{- define "tai.sandbox.localPersistent" -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "local") .Values.sandbox.local.persistence.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{- define "tai.sandbox.localClaimName" -}}
+{{- if .Values.sandbox.local.persistence.existingClaim -}}
+{{- .Values.sandbox.local.persistence.existingClaim -}}
+{{- else -}}
+{{- printf "%s-sandbox-local" (include "tai.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Sandbox — pod volumes for serve + backend: the read-only client-cert volume
+(container mode) and the persistent workspace-root volume (direct/host mode).
+*/}}
+{{- define "tai.sandbox.podVolumes" -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") }}
+- name: sandbox-client-certs
+  secret:
+    secretName: {{ include "tai.sandbox.clientCertSecretName" . }}
+{{- end }}
+{{- if include "tai.sandbox.localPersistent" . }}
+- name: sandbox-local-root
+  persistentVolumeClaim:
+    claimName: {{ include "tai.sandbox.localClaimName" . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Sandbox — container volumeMounts for serve + backend. The client certs mount at the
+FIXED conventional path /certs/client (the provider reads cert.pem/key.pem/ca.pem
+there); the workspace-root volume mounts at SANDBOX_LOCAL_ROOT.
+*/}}
+{{- define "tai.sandbox.containerVolumeMounts" -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") }}
+- name: sandbox-client-certs
+  mountPath: /certs/client
+  readOnly: true
+{{- end }}
+{{- if include "tai.sandbox.localPersistent" . }}
+- name: sandbox-local-root
+  mountPath: {{ .Values.sandbox.local.root | quote }}
+{{- end }}
 {{- end -}}
 

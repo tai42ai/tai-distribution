@@ -32,3 +32,5 @@ tai42-storage-local==1.0.4
 tai42-backend-arq==2.0.1
 tai42-identity-redis==1.0.4
 tai42-config-k8s==1.0.4
+tai42-sandbox-docker==1.0.0
+tai42-sandbox-local==1.0.0
