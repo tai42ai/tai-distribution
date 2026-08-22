@@ -51,6 +51,7 @@ spec:
       volumes:
         {{- include "tai.podVolumes" . | nindent 8 }}
         {{- include "tai.pluginPrefixVolume" . | nindent 8 }}
+        {{- include "tai.sandbox.podVolumes" . | nindent 8 }}
         {{- with .Values.backend.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -126,6 +127,7 @@ spec:
           volumeMounts:
             {{- include "tai.containerVolumeMounts" . | nindent 12 }}
             {{- include "tai.pluginPrefixVolumeMount" . | nindent 12 }}
+            {{- include "tai.sandbox.containerVolumeMounts" . | nindent 12 }}
             {{- with .Values.backend.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

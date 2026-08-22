@@ -140,6 +140,8 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/backend-arq/     /src/backend-arq/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/identity-redis/  /src/identity-redis/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/config-k8s/      /src/config-k8s/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/sandbox-docker/  /src/sandbox-docker/
+COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/sandbox-local/   /src/sandbox-local/
 # The msgpack/setuptools floors hold the transitive versions above the CVEs the
 # image vulnerability gate (HIGH, fixed-only) refuses; both venv flavors carry them.
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -154,6 +156,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/backend-arq \
       /src/identity-redis \
       /src/config-k8s \
+      /src/sandbox-docker \
+      /src/sandbox-local \
       "msgpack>=1.2.1" \
       "setuptools>=78.1.1"
 

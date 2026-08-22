@@ -409,6 +409,143 @@ pluginPrefix:
   storageClass: ""
 
 # -----------------------------------------------------------------------------
+# Sandbox (optional code-execution sandbox for coding agents)
+# -----------------------------------------------------------------------------
+# OFF by default. Baking a provider does not turn the feature on: the sandbox is
+# a scalar single-instance holder, so a deployment installs EXACTLY ONE provider
+# in its manifest `sandbox_module` — either the CONTAINER provider
+# (tai42_sandbox_docker, isolated per-session containers via a Docker engine) or
+# the DIRECT/HOST provider (tai42_sandbox_local, the agent code runs on the app
+# process's own host with NO isolation). The two are mutually exclusive.
+#
+# When enabled the chart emits BOTH provider connection envs onto serve + backend
+# (SANDBOX_DOCKER_HOST and SANDBOX_LOCAL_ROOT); the runtime `sandbox_module`
+# selects which provider reads its key, and the unselected key renders empty/unused.
+# mTLS client certs are a fixed VOLUME MOUNT at /certs/client — never env — so the
+# provider reads them from a stable path and no cert value lands in the pod env.
+sandbox:
+  # Master switch. false = no sandbox objects, no env. true = wire the selected
+  # provider (see `provider`) and emit the connection envs.
+  enabled: false
+
+  # Which provider the deployment runs, MUTUALLY EXCLUSIVE:
+  #   docker : container mode (tai42_sandbox_docker) — the built-in or external
+  #            Docker engine below runs isolated per-session containers.
+  #   local  : direct/host mode (tai42_sandbox_local) — the agent code runs on the
+  #            serve/backend host; workspaces live under `local.root`. NO engine,
+  #            NO certs, NO isolation (the honest no-isolation posture).
+  # This selects which chart objects render; it must match the manifest
+  # `sandbox_module` the operator installs.
+  provider: docker
+
+  # Container-mode Docker engine (used when provider=docker).
+  engine:
+    # "builtin"  : the chart deploys a rootless-dind engine workload (a SEPARATE
+    #              Deployment, NOT a sidecar — the app pods' hardened securityContext
+    #              is untouched; the engine carries its own isolated privilege).
+    # "external" : connect to an operator-run engine at `external.endpoint`; the
+    #              chart provisions no engine, PVC, certs, or NetworkPolicy.
+    # Defaults to builtin when the sandbox is enabled.
+    mode: builtin
+
+    # Rootless-dind image, DIGEST-PINNED so the engine cannot float across a rebuild.
+    # Refresh the digest when intentionally moving to a newer docker release.
+    image:
+      repository: docker
+      tag: "28-dind-rootless@sha256:7c3e797187e43738220462658f4586572cbd3bf009f728b21e34d9c5c06ce431"
+      pullPolicy: IfNotPresent
+
+    # The engine pod's OWN security posture — isolated to it, never applied to the
+    # app pods. Rootless-dind needs SYS_ADMIN (to create its inner user/net
+    # namespaces) and an unconfined seccomp profile; where the cluster offers a
+    # sandboxed runtime (sysbox / gVisor) prefer `runtimeClassName` and drop
+    # SYS_ADMIN. This privilege is the deliberate, isolated cost of an in-cluster
+    # sandbox and lives ONLY on this pod.
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: true
+      capabilities:
+        add:
+          - SYS_ADMIN
+      seccompProfile:
+        type: Unconfined
+    # Optional sandboxed RuntimeClass (sysbox / gVisor). When set the operator can
+    # additionally drop SYS_ADMIN above — the runtime provides the isolation.
+    runtimeClassName: ""
+
+    # The daemon data-root the durable workspace store is mounted at. ROOTLESS dind
+    # keeps its images/volumes under the rootless user's home, NOT the rootful
+    # /var/lib/docker — so the durable PVC mounts here for `persistent` workspaces
+    # to actually survive an engine restart.
+    dataDir: /home/rootless/.local/share/docker
+
+    # DURABLE workspace block store (§ persistent sandbox sessions). The inner
+    # per-workspace docker volumes live in the engine's /var/lib/docker tree, so
+    # making that tree durable makes `persistent` sessions survive an engine
+    # restart or a node move. One engine pod => ReadWriteOnce; pick a
+    # NODE-INDEPENDENT (networked) StorageClass so the volume re-attaches when the
+    # pod reschedules — a node-local class strands persistent workspaces on a lost
+    # node.
+    persistence:
+      size: 10Gi
+      storageClass: ""
+      accessMode: ReadWriteOnce
+
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+
+    # Engine-pod egress NetworkPolicy (§ builtin only). All inner-session traffic
+    # NAT's out through the engine pod, so restricting the ENGINE POD's egress
+    # confines the sessions. The policy ALLOWS the public internet EXCEPT these
+    # operator-supplied cluster-internal ranges (and cloud metadata 169.254.169.254),
+    # and ALLOWS DNS on :53 to `dnsCIDRs`.
+    #
+    # internalCIDRs is REQUIRED when enabled + builtin: a NetworkPolicy `except`
+    # needs concrete CIDRs and a cluster's pod/service/node ranges are
+    # deployment-specific. Empty => the render FAILS LOUDLY rather than shipping an
+    # engine whose sessions can reach the whole internal network.
+    internalCIDRs: []        # e.g. ["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"]
+    dnsCIDRs: []             # cluster DNS service CIDR(s) egress is allowed to on :53
+
+  # External-engine connection (used when engine.mode=external).
+  external:
+    # tcp://host:2376 — REQUIRED when engine.mode=external (render fails when empty;
+    # no silent default). The control API is always mTLS-authenticated.
+    endpoint: ""
+    # A k8s Secret holding cert.pem / key.pem / ca.pem, mounted READ-ONLY into
+    # serve + backend at /certs/client. REQUIRED when engine.mode=external.
+    clientCertSecret: ""
+
+  # Direct/host-mode workspace root (used when provider=local). The persistent
+  # workspace of a `local` session is the host directory <root>/<workspace_key>,
+  # so for the `persistent` tier to survive a pod restart or a node move `root`
+  # MUST resolve to provisioned, persistent storage mounted into serve + backend
+  # (persistence below). This path is the SANDBOX_LOCAL_ROOT env value.
+  local:
+    root: /var/lib/tai-sandbox-local
+    # Persistent volume mounted at `root` in serve + backend. serve AND backend
+    # both run agent code and both mount it, so ReadWriteMany; pick a
+    # NODE-INDEPENDENT StorageClass (same caveat as the engine store). OFF by
+    # default: without it a `persistent` local workspace dies on the ephemeral
+    # rootfs at restart.
+    persistence:
+      enabled: false
+      existingClaim: ""
+      accessMode: ReadWriteMany
+      size: 10Gi
+      storageClass: ""
+
+# -----------------------------------------------------------------------------
 # Feature stores
 # -----------------------------------------------------------------------------
 # Each PG-backed feature is OFF by default. Enabling any one wires the "default"

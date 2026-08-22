@@ -40,6 +40,7 @@ helm install tai oci://ghcr.io/tai42ai/charts/tai \
 | `postgresql` StatefulSet | optional quickstart Postgres (`postgres:16-alpine`) |
 | `redis` StatefulSet | optional quickstart Redis (`redis:7-alpine`) — state, worker bus, feature stores |
 | `memory-redis` StatefulSet | optional module-capable Redis (`redis:8`) for LangGraph flow memory ([Flow memory](#flow-memory-checkpoint--store)) |
+| `sandbox-engine` Deployment | optional built-in rootless-dind engine + ClusterIP Service, mTLS cert Secrets, durable workspace PVC, egress NetworkPolicy, and in-pod egress firewall ConfigMap (`<engine>-firewall`) (`sandbox.enabled`, container/builtin mode; see [Sandbox](#sandbox-optional)) |
 
 ## Recorded design decisions
 
@@ -186,6 +187,65 @@ plugins: their handlers and middleware stack are frozen into the ASGI app when t
 process builds, so a router or middleware plugin — net-new or an upgrade of an
 already-listed one — takes effect only when each pod restarts
 (`kubectl rollout restart`).
+
+## Sandbox (optional)
+
+OFF by default (`sandbox.enabled=false`). The sandbox is a **scalar single-instance
+holder**: a deployment installs EXACTLY ONE provider in its manifest
+`sandbox_module`, and the two providers are **mutually exclusive** — set
+`sandbox.provider` to match:
+
+- **Container mode** (`provider: docker`, `sandbox_module: tai42_sandbox_docker`) —
+  the agent code runs inside isolated per-session containers spawned by a Docker
+  engine. `engine.mode`:
+  - `builtin` (default when enabled) — the chart deploys a **rootless-dind engine**
+    as a **separate** Deployment (never a sidecar; the app pods' hardened
+    `securityContext` is untouched). The engine carries its own isolated privilege
+    (`SYS_ADMIN`, unconfined seccomp) — the deliberate cost of an in-cluster sandbox;
+    where a sandboxed RuntimeClass (**sysbox / gVisor**) is available, set
+    `engine.runtimeClassName` and drop `SYS_ADMIN`. The chart also provisions the
+    durable workspace **PVC** (mounted at the engine's data-root — rootless dind
+    keeps its store under the rootless user's home, not `/var/lib/docker`), the
+    **egress NetworkPolicy**, and the **mTLS certs**.
+  - `external` — connect to an operator-run engine at `external.endpoint`
+    (**required**); supply `external.clientCertSecret` (**required**, holding
+    `cert.pem`/`key.pem`/`ca.pem`). The chart provisions no engine, PVC, certs, or
+    NetworkPolicy; the operator owns the engine's durable storage and egress firewall.
+- **Direct / host mode** (`provider: local`,
+  `sandbox_module: tai42_sandbox_local`) — the agent code runs **on the serve /
+  backend host** with **NO isolation** (the honest no-isolation posture). No engine,
+  no certs, no session image. Workspaces live under `SANDBOX_LOCAL_ROOT`
+  (`local.root`); for the `persistent` tier to survive a restart / node move, set
+  `local.persistence.enabled=true` so a node-independent PVC mounts at that root in
+  both app pods.
+
+**Connection env.** When enabled the chart emits BOTH provider connection keys onto
+serve + backend — `SANDBOX_DOCKER_HOST` (the built-in engine's ClusterIP service or
+the external endpoint) and `SANDBOX_LOCAL_ROOT` (the host workspace root). Both
+coexist in the pod env; the runtime `sandbox_module` selects which provider reads
+its key, and the unselected key is unused. The mTLS client certs are a fixed
+**volume mount** at `/certs/client` — never env — so no cert value lands in the
+recycle-pinned pod env.
+
+**mTLS trust (builtin).** The engine and app pods are separate pods and the engine
+holds **no RBAC**, so the chart mints the mTLS trust at install time: one CA signs a
+server bundle (the engine serves the control API with it) and a client bundle
+(serve + backend present it). A `lookup` reuses the live Secrets across upgrades
+(`helm.sh/resource-policy: keep`) so the certs are not rotated — the same
+generated-credential keep pattern the Postgres/Redis passwords use. For GitOps
+(`helm template | kubectl apply`, which cannot `lookup`), use an **external** engine
+and supply `clientCertSecret`.
+
+**Session isolation + egress.** An inner session is a container of the rootless-dind
+daemon on dind's private inner bridge, NAT'd out through the engine pod's network
+namespace and reachable to nothing else. `engine.internalCIDRs` is **required** in
+builtin mode — the engine-pod egress NetworkPolicy allows the public internet
+EXCEPT those cluster-internal ranges and cloud metadata (empty **fails the render**
+rather than shipping an engine whose sessions can reach the whole internal network),
+and allows DNS on `:53` to `engine.dnsCIDRs`. NetworkPolicy `ipBlock` enforcement is
+CNI-dependent, so the engine pod also programs its own dind-netns egress firewall (a
+chart ConfigMap script the engine container runs at daemon start) as the
+CNI-independent backstop — both layers ship for builtin.
 
 ## Upgrading
 
@@ -372,6 +432,20 @@ enabling any of them brings that connection up.
 | `pluginPrefix.path` | `/var/lib/tai/plugins` | mount path and `TAI_PLUGINS_PREFIX` value |
 | `pluginPrefix.existingClaim` | `""` | use an existing PVC instead of the chart-created one |
 | `pluginPrefix.accessMode` / `.size` / `.storageClass` | `ReadWriteMany` / `1Gi` / `""` | chart-created PVC spec (`ReadWriteOnce` only when a single node holds every mounting pod) |
+| `sandbox.enabled` | `false` | enable the code-execution sandbox; emits `SANDBOX_DOCKER_HOST` + `SANDBOX_LOCAL_ROOT` onto serve + backend ([Sandbox](#sandbox-optional)) |
+| `sandbox.provider` | `docker` | `docker` (container) or `local` (direct/host) — must match the manifest `sandbox_module`; mutually exclusive |
+| `sandbox.engine.mode` | `builtin` | `builtin` (chart deploys a rootless-dind engine) or `external` (connect to `external.endpoint`) |
+| `sandbox.engine.image.*` | `docker:28-dind-rootless@sha256:…` | rootless-dind engine image (digest-pinned) |
+| `sandbox.engine.podSecurityContext` / `.securityContext` | rootless-dind (`SYS_ADMIN`, unconfined seccomp) | engine-pod posture — isolated to the engine, never the app pods |
+| `sandbox.engine.runtimeClassName` | `""` | optional sandboxed RuntimeClass (sysbox / gVisor); lets the operator drop `SYS_ADMIN` |
+| `sandbox.engine.dataDir` | `/home/rootless/.local/share/docker` | daemon data-root the durable workspace PVC mounts at (rootless dind's store) |
+| `sandbox.engine.persistence.*` | `10Gi` / `""` / `ReadWriteOnce` | durable workspace PVC (pick a node-independent StorageClass) |
+| `sandbox.engine.internalCIDRs` | `[]` | **required** in builtin mode — cluster-internal CIDRs the engine-pod egress NetworkPolicy denies (empty fails the render) |
+| `sandbox.engine.dnsCIDRs` | `[]` | cluster DNS CIDR(s) egress is allowed to on `:53` |
+| `sandbox.external.endpoint` | `""` | `tcp://host:2376` — **required** when `engine.mode=external` |
+| `sandbox.external.clientCertSecret` | `""` | Secret (`cert.pem`/`key.pem`/`ca.pem`) mounted at `/certs/client` — **required** when `engine.mode=external` |
+| `sandbox.local.root` | `/var/lib/tai-sandbox-local` | `SANDBOX_LOCAL_ROOT` — direct/host workspace root |
+| `sandbox.local.persistence.*` | `false` / `ReadWriteMany` / `10Gi` / `""` | persistent workspace-root PVC for direct/host mode (node-independent StorageClass) |
 | `features.*.enabled` | `false` | Postgres-backed feature toggles (table above) |
 | `schemaInit.enabled` | `auto` | `tai db migrate` hook: `auto`/`true`/`false`. Phase: pre-install/upgrade (external Postgres) or post-install/upgrade (quickstart) |
 | `postgresql.enabled` | `true` | deploy the quickstart Postgres StatefulSet |

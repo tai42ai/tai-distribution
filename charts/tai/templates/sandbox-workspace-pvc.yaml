@@ -1,0 +1,56 @@
+{{- /*
+Durable sandbox workspace storage — the seam the `persistent` session tier
+consumes. Container mode and direct/host mode are mutually exclusive, so at most
+one of these claims renders.
+
+  * Container mode (provider=docker, engine.mode=builtin): the inner per-workspace
+    docker volumes live in the engine's /var/lib/docker tree, so this PVC IS the
+    durable block store persistent sessions survive an engine restart / node move
+    on. One engine pod => ReadWriteOnce. Pick a NODE-INDEPENDENT (networked)
+    StorageClass so it re-attaches on reschedule — a node-local class strands
+    persistent workspaces on a lost node. The external-engine operator owns their
+    own /var/lib/docker durability; the chart provisions this for the builtin
+    engine only.
+
+  * Direct/host mode (provider=local, local.persistence.enabled): the workspace
+    root <SANDBOX_LOCAL_ROOT>/<workspace_key> is a host directory the serve +
+    backend processes write, so the PVC mounts into BOTH app pods
+    (ReadWriteMany), on a node-independent StorageClass (same caveat).
+*/ -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") (eq .Values.sandbox.engine.mode "builtin") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tai.sandbox.engineName" . }}-data
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-engine
+spec:
+  accessModes:
+    - {{ .Values.sandbox.engine.persistence.accessMode }}
+  {{- with .Values.sandbox.engine.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.sandbox.engine.persistence.size }}
+{{- end }}
+{{- if and (include "tai.sandbox.localPersistent" .) (not .Values.sandbox.local.persistence.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tai.sandbox.localClaimName" . }}
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-local
+spec:
+  accessModes:
+    - {{ .Values.sandbox.local.persistence.accessMode }}
+  {{- with .Values.sandbox.local.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.sandbox.local.persistence.size }}
+{{- end }}

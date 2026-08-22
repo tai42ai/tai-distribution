@@ -39,6 +39,16 @@ default_routers: all
 # lifecycle_modules:
 #   - tai42_identity_redis.redis_api_key_provider
 
+# --- Sandbox (optional) -----------------------------------------------------
+# The coding-agent sandbox is a scalar single-instance holder: uncomment EXACTLY
+# ONE provider — the two are MUTUALLY EXCLUSIVE. Container mode (sandbox-docker)
+# runs each session in an isolated rootless-dind container: bring up the engine
+# with `--profile sandbox` and set SANDBOX_DOCKER_HOST in .env. Direct/host mode
+# (sandbox-local) runs the agent's code ON THE HOST with NO isolation — set
+# SANDBOX_LOCAL_ROOT in .env; no engine, certs, or session image.
+# sandbox_module: tai42_sandbox_docker
+# sandbox_module: tai42_sandbox_local
+
 # --- Tools ------------------------------------------------------------------
 # One toolbox tool, branched onto the task backend so a backend round-trip is
 # exercisable out of the box: `sync_task` branches `current_time_info` into

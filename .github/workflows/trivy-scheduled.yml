@@ -9,6 +9,9 @@
 #
 # A red here means the published image needs a rebuild against a patched base;
 # it blocks no PR (this workflow has no push / PR trigger).
+#
+# All three published images are re-scanned: the platform image plus the two
+# pinned session images (the claude runner and the lean exec image).
 
 name: trivy-scheduled
 
@@ -26,6 +29,13 @@ permissions:
 jobs:
   rescan:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image-ref:
+          - ghcr.io/tai42ai/tai:latest
+          - ghcr.io/tai42ai/tai-sandbox-claude-code:latest
+          - ghcr.io/tai42ai/tai-sandbox-exec:latest
     steps:
       # Checkout so trivy auto-reads the repo-root .trivyignore, matching the
       # build-time scans' exception set.
@@ -41,7 +51,7 @@ jobs:
       - name: Trivy scan (published latest image)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/tai42ai/tai:latest
+          image-ref: ${{ matrix.image-ref }}
           format: table
           exit-code: '1'
           ignore-unfixed: true

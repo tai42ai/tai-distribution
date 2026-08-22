@@ -1,0 +1,56 @@
+{{- /*
+Engine-pod egress confinement (container mode, engine.mode=builtin). A k8s
+NetworkPolicy selects PODS, and the inner dind sessions are NOT pods (they live on
+dind's private inner bridge and egress by NAT through THIS engine pod's network
+namespace) — so confining the sessions IS confining the ENGINE POD's egress. This
+policy ALLOWS the public internet EXCEPT the operator-supplied cluster-internal
+ranges and cloud metadata, and ALLOWS DNS on :53 to the cluster DNS CIDRs.
+
+Honest residual: NetworkPolicy egress `ipBlock` enforcement is CNI-dependent
+(Calico/Cilium enforce it; some CNIs do not, and link-local metadata can slip past
+on some) — which is why the engine pod ALSO programs its own dind-netns egress
+firewall as the primary, CNI-independent backstop (the pod's container command runs
+the firewall init at daemon start; see sandbox-firewall-configmap.yaml). This policy
+is the cluster-native second layer. Egress default is OPEN by ruling, so this ALLOWS
+the internet and denies only the deployment-internal ranges + metadata — it is not an
+allowlist.
+*/ -}}
+{{- if and .Values.sandbox.enabled (eq .Values.sandbox.provider "docker") (eq .Values.sandbox.engine.mode "builtin") }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tai.sandbox.engineName" . }}-egress
+  labels:
+    {{- include "tai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox-engine
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sandbox-engine
+  policyTypes:
+    - Egress
+  egress:
+    # Public internet, minus the internal ranges and cloud metadata.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range .Values.sandbox.engine.internalCIDRs }}
+              - {{ . | quote }}
+              {{- end }}
+              - 169.254.169.254/32
+    {{- with .Values.sandbox.engine.dnsCIDRs }}
+    # Cluster DNS (in the internal range the rule above excepts) on :53.
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+{{- end }}

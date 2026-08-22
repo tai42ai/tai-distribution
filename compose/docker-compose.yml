@@ -155,6 +155,27 @@ x-tai-app-env: &tai-app-env
   STORAGE_S3_SECURE: "false"
   STORAGE_S3_REGION: us-east-1
 
+  # --- sandbox providers (optional; sandbox_module selects EXACTLY ONE) --------
+  # Two provider connection envs, one per baked sandbox provider, BOTH
+  # empty-default so `docker compose config` needs no new required var and an
+  # unset key = that provider off (start-time behaviour only, per the
+  # minio/rabbitmq unguarded-substitution pattern — never a `${VAR:?}` compose
+  # guard, which would also block the default profile-less stack). Both keys
+  # COEXIST here even though the scalar manifest `sandbox_module` names exactly
+  # one provider at runtime: anchor presence is chart-values scope, so the
+  # unselected provider's key stays empty/unused and harmless. Shared by
+  # serve/backend/metrics/db-migrate through this one anchor.
+  #   SANDBOX_DOCKER_HOST — the sandbox-docker engine control endpoint
+  #     (tcp://sandbox-engine:2376, `sandbox` profile). The mTLS client certs
+  #     are a fixed RO volume mount at /certs/client, NOT env, so no cert path
+  #     ever becomes a recycle-pinned anchor key.
+  #   SANDBOX_LOCAL_ROOT  — the sandbox-local host workspace ROOT (direct/host
+  #     mode). Persistent workspaces live at <SANDBOX_LOCAL_ROOT>/<workspace_key>,
+  #     so it MUST resolve to the provisioned tai-sandbox-local-data volume
+  #     (mounted into serve+backend below) for the `persistent` tier to survive.
+  SANDBOX_DOCKER_HOST: "${SANDBOX_DOCKER_HOST:-}"
+  SANDBOX_LOCAL_ROOT: "${SANDBOX_LOCAL_ROOT:-}"
+
 services:
   # ---- db-migrate: one-shot migration runner -------------------------------
   # Runs the app's pending migrations (ordered chain, each applied once and
@@ -197,6 +218,21 @@ services:
     volumes:
       - ./config:/app
       - tai-prometheus:/home/tai
+      # Sandbox mTLS client certs (RO), shared from sandbox-engine: the
+      # sandbox-docker provider reads cert.pem/key.pem/ca.pem from this fixed
+      # path (never env). Empty + unused when the `sandbox` profile is off.
+      - tai-sandbox-certs:/certs/client:ro
+      # Direct/host mode (sandbox-local) persistent workspace ROOT. Persistent
+      # workspaces live at <SANDBOX_LOCAL_ROOT>/<workspace_key>, so this MUST be
+      # a provisioned volume for the `persistent` tier to survive a container
+      # restart — the reciprocal of the engine block-store dependency below.
+      # Mutually exclusive with docker mode; unused/empty under sandbox-docker.
+      - tai-sandbox-local-data:${SANDBOX_LOCAL_ROOT:-/var/lib/tai-sandbox-local}
+    # Default datastore network + the sandbox control path (§ sandbox-ctrl): serve
+    # reaches the engine control API for the sync/conversation/SSE session doors.
+    networks:
+      - default
+      - sandbox-ctrl
     ports:
       - "${TAI_SERVE_PORT:-8000}:8000"
     depends_on:
@@ -245,6 +281,20 @@ services:
       # (the metrics reader below rides serve's volume). In the chart they ARE
       # exposed — the backend pod carries its own metrics sidecar.
       - tai-prometheus-backend:/home/tai
+      # Sandbox mTLS client certs (RO), shared from sandbox-engine: the
+      # sandbox-docker provider reads cert.pem/key.pem/ca.pem from this fixed
+      # path (never env). Empty + unused when the `sandbox` profile is off.
+      - tai-sandbox-certs:/certs/client:ro
+      # Direct/host mode (sandbox-local) persistent workspace ROOT — same volume
+      # serve mounts (both run agent code). MUST be provisioned for the
+      # `persistent` tier to survive; mutually exclusive with docker mode.
+      - tai-sandbox-local-data:${SANDBOX_LOCAL_ROOT:-/var/lib/tai-sandbox-local}
+    # Default datastore network + the sandbox control path (§ sandbox-ctrl): the
+    # background-submit door creates sessions on the worker, so backend also
+    # reaches the engine control API.
+    networks:
+      - default
+      - sandbox-ctrl
     depends_on:
       postgres:
         condition: service_healthy
@@ -482,6 +532,112 @@ services:
       retries: 20
       start_period: 5s
 
+  # ---- sandbox profile: the rootless-dind coding-session engine -------------
+  # The sandbox-docker provider's container engine. Off unless `--profile
+  # sandbox`. A rootless Docker-in-Docker daemon that runs each agent session as
+  # an INNER container on its own private bridge — NEVER on any compose network.
+  # It is on `sandbox-ctrl` ONLY (not the default network), so the engine cannot
+  # address postgres/redis/minio; serve+backend reach its mTLS control API on
+  # tcp://sandbox-engine:2376 over sandbox-ctrl.
+  #
+  # ISOLATION INVARIANT (README design F.19): a session is an inner container of
+  # this daemon, NAT'd out through the engine's netns for internet egress and
+  # reachable to NOTHING else of the deployment — not serve, backend, the
+  # datastores, nor the control API (it holds no client cert). The network split,
+  # the dind egress firewall (below), and mTLS on the control API ENFORCE this
+  # deny-by-default; PLAN_5's negative test confirms it.
+  #
+  # DURABLE BLOCK STORE (reciprocal dependency): PLAN_3 creates/adopts the
+  # persistent tai-sbx-<workspace_key> volumes ON this engine; they are docker
+  # volumes INSIDE this daemon, so they physically live in its /var/lib/docker
+  # tree. Persisting that tree on the tai-sandbox-engine-data named volume is
+  # what makes PLAN_3's durability="persistent" tier REAL across an engine
+  # recycle — PLAN_3 names the seam, this file owns the block storage it lives
+  # on. Ephemeral sessions ride anonymous inner volumes that die with their
+  # container (no durable footprint).
+  #
+  # BUILD-TIME RE-VERIFY (STOP-and-surface, never a privileged fallback): confirm
+  # the pinned rootless image can BOTH self-generate the client certs AND program
+  # its own inner-bridge firewall on the target host; if it cannot, stop and
+  # surface — the sysbox/gVisor runtime is the documented hardening path.
+  sandbox-engine:
+    # tag 28-dind-rootless, pinned by digest so the engine base cannot float
+    # across a pull. Refresh the digest when moving to a newer docker 28.x.
+    image: docker:28-dind-rootless@sha256:7c3e797187e43738220462658f4586572cbd3bf009f728b21e34d9c5c06ce431
+    profiles: ["sandbox"]
+    logging: *default-logging
+    restart: unless-stopped
+    # Generous grace so the daemon drains inner sessions cleanly before SIGKILL.
+    stop_grace_period: 120s
+    # Memory ceiling + cpu cap bound the engine on a single host (the per-service
+    # bound convention); size for the concurrent session load you expect.
+    mem_limit: 2048m
+    cpus: 2.0
+    # Documented rootless-dind posture (NOT --privileged): the nested user
+    # namespace + inner-bridge iptables need seccomp/apparmor unconfined on the
+    # ENGINE container only — the app services keep their posture untouched. If
+    # the pinned image needs more than this on your host, STOP and surface (see
+    # the header); the sysbox/gVisor runtime is the documented hardening path.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    environment:
+      # dind self-generates the CA + server + CLIENT certs under this dir; the
+      # client dir ($DOCKER_TLS_CERTDIR/client) holds cert.pem/key.pem/ca.pem —
+      # the three filenames serve+backend consume RO at /certs/client. Byte-for-
+      # byte the filenames PLAN_3's provider defaults (tls_cert/key/ca_path).
+      DOCKER_TLS_CERTDIR: /certs
+    # sandbox-ctrl ONLY — the engine is deliberately off the datastore network.
+    networks:
+      - sandbox-ctrl
+    volumes:
+      # Durable block store: the daemon's /var/lib/docker tree (see header).
+      - tai-sandbox-engine-data:/var/lib/docker
+      # Share ONLY the generated client certs (cert.pem/key.pem/ca.pem) to
+      # serve+backend: dind writes them here ($DOCKER_TLS_CERTDIR/client); the CA
+      # + server material stays on the engine's own rootfs, never shared. A
+      # SESSION never mounts this volume.
+      - tai-sandbox-certs:/certs/client
+      # Egress firewall init (§ dind egress firewall), RO. Programmed into the
+      # inner bridge's DOCKER-USER chain at daemon start, before any session
+      # create — deployment-internal ranges + metadata denied, internet OPEN.
+      - ./sandbox/dind-egress-firewall.sh:/usr/local/bin/dind-egress-firewall.sh:ro
+    # Program the inner-bridge egress firewall, then exec the stock rootless
+    # entrypoint (rootlesskit + dockerd). The firewall backgrounds itself, waits
+    # for dockerd to create DOCKER-USER, and installs the deny rules; the app
+    # only dials the control API after the daemon is up, so the rules are in
+    # place before the first session create succeeds.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        /usr/local/bin/dind-egress-firewall.sh &
+        exec dockerd-entrypoint.sh "$@"
+      - sh
+    # Ready when the daemon answers over its TLS socket, using the client certs
+    # it generated into /certs/client. Generous start_period covers first-boot
+    # cert generation.
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "docker --tlsverify --tlscacert /certs/client/ca.pem --tlscert /certs/client/cert.pem --tlskey /certs/client/key.pem -H tcp://127.0.0.1:2376 info >/dev/null 2>&1"
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+# The default datastore network, now declared EXPLICITLY so the sandbox control
+# network can sit alongside it. Services with no `networks:` key still ride
+# `default` (postgres/redis/metrics/minio/rabbitmq/redis-agents/db-migrate).
+networks:
+  default:
+  # Server-side sandbox control path (§ sandbox-ctrl, README design F.19): ONLY
+  # serve, backend, and sandbox-engine. Splits the engine control API off the
+  # datastore network — the engine cannot address postgres/redis/minio, and a
+  # session (an inner container of the daemon, never on any compose network)
+  # reaches nothing of the deployment. NEVER place a datastore on this network.
+  sandbox-ctrl:
+
 volumes:
   tai-postgres-data:
   tai-redis-data:
@@ -490,3 +646,16 @@ volumes:
   tai-minio-data:
   tai-rabbitmq-data:
   tai-redis-agents-data:
+  # Sandbox durable block store: the rootless-dind daemon's /var/lib/docker tree,
+  # where PLAN_3's persistent tai-sbx-<workspace_key> inner volumes live — makes
+  # durability="persistent" survive an engine recycle (the reciprocal dependency
+  # stated on the sandbox-engine service).
+  tai-sandbox-engine-data:
+  # Sandbox-local persistent workspace root (direct/host mode), mounted into
+  # serve+backend at SANDBOX_LOCAL_ROOT so persistent host workspaces survive a
+  # container restart. Mutually exclusive with the engine store.
+  tai-sandbox-local-data:
+  # Shared mTLS client certs (cert.pem/key.pem/ca.pem) dind generates and
+  # serve+backend consume RO at /certs/client. Not durable state — a rebuild
+  # regenerates it.
+  tai-sandbox-certs:
