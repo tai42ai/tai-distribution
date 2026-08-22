@@ -93,7 +93,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Dry-run resolve docker/pypi-requirements.txt against PyPI
-        run: uv pip compile --quiet docker/pypi-requirements.txt -o /dev/null
+        # Resolve for the IMAGE's Python (3.13, the python:3.13-slim base), not the
+        # runner default (3.12): tai42-contract 4.1.0 floors requires-python>=3.13, so
+        # resolving on 3.12 spuriously fails. --python-version targets 3.13 markers
+        # without needing the interpreter installed.
+        run: uv pip compile --python-version 3.13 --quiet docker/pypi-requirements.txt -o /dev/null
 
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
