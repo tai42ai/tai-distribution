@@ -206,10 +206,20 @@ holder**: a deployment installs EXACTLY ONE provider in its manifest
     the **daemon still runs rootless** (uid 1000), so inner sessions stay
     rootless-contained, and privilege does not widen what a session can reach (the
     network split + egress firewall do that). This isolated privilege — the
-    deliberate cost of an in-cluster sandbox — lives ONLY on this pod. The node must
-    permit rootlesskit's nested userns; `privileged` covers this on a stock node with
-    no sysctl change (a hardened/custom node AppArmor policy mediating the rootlesskit
-    path can still need a `userns` allowance). Where a sandboxed RuntimeClass
+    deliberate cost of an in-cluster sandbox — lives ONLY on this pod. **Node
+    prerequisite (unprivileged userns):** rootlesskit must create an unprivileged
+    user namespace for the rootless daemon. `privileged` covers this on a stock node
+    with no sysctl change, but a node with AppArmor **enforcing** the Ubuntu
+    23.10+/24.04 hardening `kernel.apparmor_restrict_unprivileged_userns=1` still
+    **denies** it (verified on real runners) — the engine container exits (1) ~2s
+    after start with `[rootlesskit:parent] error: failed to start the child:
+    fork/exec /proc/self/exe: operation not permitted` and the sandbox is
+    unavailable. On such a node, permit unprivileged userns on the node —
+    `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (persist under
+    `/etc/sysctl.d/` for reboots); the daemon still runs fully rootless, this only
+    relaxes a node-level restriction. Where you cannot change the node, use
+    `engine.mode: external` or the direct/host provider (no isolation). Where a
+    sandboxed RuntimeClass
     (**sysbox / gVisor**) is available, set `engine.runtimeClassName` and drop
     `privileged`/`SYS_ADMIN`. The chart also provisions the
     durable workspace **PVC** (mounted at the engine's data-root — rootless dind

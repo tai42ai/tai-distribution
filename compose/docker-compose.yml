@@ -566,11 +566,19 @@ services:
   # it. So the firewall runs as root (the root entrypoint), then the daemon drops to
   # rootless. Only the firewall install is root; dockerd is rootless.
   #
-  # NODE PREREQUISITE: `privileged: true` lets rootlesskit create the nested userns
-  # with NO host sysctl change on a stock host (the AppArmor unprivileged-userns gate
-  # does not apply inside a privileged container). A host with a hardened/custom
-  # AppArmor policy that additionally mediates the container's rootlesskit path can
-  # still need a `userns` allowance (host hardening, not the norm).
+  # HOST PREREQUISITE (unprivileged userns): rootlesskit must create an unprivileged
+  # user namespace for the rootless daemon. `privileged: true` clears this on a stock
+  # host, BUT a host with AppArmor ENFORCING the Ubuntu 23.10+/24.04 hardening
+  # `kernel.apparmor_restrict_unprivileged_userns=1` still DENIES that userns creation
+  # (verified on real runners): the engine exits(1) ~2s after start with
+  #   [rootlesskit:parent] error: failed to start the child: fork/exec /proc/self/exe: operation not permitted
+  # and container isolation is unavailable. To run here, permit unprivileged userns on
+  # the HOST — `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (persist
+  # it under /etc/sysctl.d/ for reboots). The daemon still runs fully rootless; this
+  # only relaxes a host-level userns restriction. If you cannot change the host, point
+  # SANDBOX_DOCKER_HOST at an EXTERNAL engine host that allows it (the provider `host`
+  # is a tcp:// endpoint over mTLS), or use tai42-sandbox-local (no isolation) on a
+  # trusted single-tenant box.
   #
   # DURABLE BLOCK STORE (reciprocal dependency): PLAN_3 creates/adopts the
   # persistent tai-sbx-<workspace_key> volumes ON this engine; they are docker
