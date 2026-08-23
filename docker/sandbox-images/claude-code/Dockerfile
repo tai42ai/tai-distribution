@@ -13,6 +13,13 @@ LABEL org.opencontainers.image.title="tai-sandbox-claude-code" \
       org.opencontainers.image.source="https://github.com/tai42ai/tai-distribution" \
       org.opencontainers.image.licenses="Apache-2.0"
 
+# The slim tag lags the debian security repo (the release trivy gate fails on
+# fixable CRITICAL/HIGH CVEs); apply the security updates the tag has not
+# absorbed yet — the same posture as the platform image.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 # Non-root runtime user (uid 1000). The session never needs root.
 RUN groupadd --gid 1000 sandbox \
  && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin sandbox
