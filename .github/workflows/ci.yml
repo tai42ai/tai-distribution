@@ -25,7 +25,7 @@ jobs:
   # (COPY --exclude); hadolint must be new enough to parse that flag — v3.1.0's
   # hadolint (2.12.0) rejects it as an invalid flag, v3.3.0's (2.13.x) parses it.
   # fail-fast off so every Dockerfile's findings surface, not just the first to fail.
-  hadolint:
+  hadolint-scan:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -39,6 +39,19 @@ jobs:
       - uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: ${{ matrix.dockerfile }}
+
+  # Aggregate gate for branch protection: the matrix legs report as
+  # "hadolint-scan (<dockerfile>)", names protection cannot pin without churning on
+  # every added Dockerfile. This summary is the stable required "hadolint" context;
+  # it fails if any leg failed or was cancelled (and passes only when all ran).
+  hadolint:
+    needs: hadolint-scan
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All Dockerfile lints green
+        run: |
+          [ "${{ needs.hadolint-scan.result }}" = "success" ] || { echo "hadolint matrix result: ${{ needs.hadolint-scan.result }}"; exit 1; }
 
   # Banned client/domain terms guard. The platform is generic: no client or
   # product name may appear in any tracked or newly added file (README,
