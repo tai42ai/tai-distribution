@@ -97,7 +97,10 @@ jobs:
         # runner default (3.12): tai42-contract 4.1.0 floors requires-python>=3.13, so
         # resolving on 3.12 spuriously fails. --python-version targets 3.13 markers
         # without needing the interpreter installed.
-        run: uv pip compile --python-version 3.13 --quiet docker/pypi-requirements.txt -o /dev/null
+        # Output to the runner temp dir, NOT /dev/null: uv writes the result via an
+        # atomic temp file created NEXT TO the output path, and /dev is not writable
+        # (Permission denied). We only care that resolution succeeds; the file is discarded.
+        run: uv pip compile --python-version 3.13 --quiet docker/pypi-requirements.txt -o "$RUNNER_TEMP/manifest-resolve-check.txt"
 
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
