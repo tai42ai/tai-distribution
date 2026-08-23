@@ -113,7 +113,24 @@ jobs:
         # Output to the runner temp dir, NOT /dev/null: uv writes the result via an
         # atomic temp file created NEXT TO the output path, and /dev is not writable
         # (Permission denied). We only care that resolution succeeds; the file is discarded.
-        run: uv pip compile --python-version 3.13 --quiet docker/pypi-requirements.txt -o "$RUNNER_TEMP/manifest-resolve-check.txt"
+        # refresh-pins can open its PR seconds after the fleet publishes, before PyPI's
+        # index has propagated the fresh versions everywhere ("No matching distribution
+        # for tai42-...==X"). Retry so that transient propagation lag self-heals; a
+        # genuinely unsatisfiable/self-contradicting manifest still reds within ~2 min
+        # (3 attempts, 60s apart).
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if uv pip compile --python-version 3.13 --quiet docker/pypi-requirements.txt -o "$RUNNER_TEMP/manifest-resolve-check.txt"; then
+              exit 0
+            fi
+            echo "resolve attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+            if [ "${attempt}" -lt 3 ]; then
+              sleep 60
+            fi
+          done
+          echo "::error::docker/pypi-requirements.txt did not resolve after 3 attempts"
+          exit 1
 
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
@@ -221,7 +238,23 @@ jobs:
           set -euo pipefail
           ver="$(grep -oP '^tai42-skeleton(\[[^]]*\])?==\K.*' docker/pypi-requirements.txt)"
           test -n "${ver}" || { echo "could not read tai42-skeleton pin from docker/pypi-requirements.txt" >&2; exit 1; }
-          python -m pip install --disable-pip-version-check "tai42-skeleton==${ver}" pyyaml
+          # refresh-pins can open its PR seconds after the fleet publishes, before PyPI's
+          # index has propagated tai42-skeleton==${ver} everywhere ("No matching
+          # distribution"). Retry so that transient propagation lag self-heals; a
+          # genuinely missing/unsatisfiable pin still reds within ~2 min (3 attempts,
+          # 60s apart).
+          for attempt in 1 2 3; do
+            if python -m pip install --disable-pip-version-check "tai42-skeleton==${ver}" pyyaml; then
+              break
+            fi
+            echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+            if [ "${attempt}" -lt 3 ]; then
+              sleep 60
+            else
+              echo "::error::tai42-skeleton==${ver} did not install after 3 attempts"
+              exit 1
+            fi
+          done
           python compose/tests/parity_app_env.py
 
   # Detect whether the Helm chart is present; the helm jobs are gated on this.
