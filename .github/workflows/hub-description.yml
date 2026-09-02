@@ -1,0 +1,29 @@
+# The Docker Hub repository overview is versioned in-repo and synced on every
+# change: hub.docker.com renders docker/DOCKERHUB-OVERVIEW.md as the tai42/tai
+# page, so edits go through review here and the page can never drift from main.
+name: hub-description
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docker/DOCKERHUB-OVERVIEW.md
+      - .github/workflows/hub-description.yml
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sync the overview to Docker Hub
+        uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77 # v4.0.2
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: tai42/tai
+          readme-filepath: docker/DOCKERHUB-OVERVIEW.md
+          short-description: >-
+            tai42 platform image: minimal core, multi-arch — serve
+            (API+Studio), worker, and metrics in one.
