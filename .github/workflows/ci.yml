@@ -90,6 +90,38 @@ jobs:
             exit "${status}"
           fi
           echo "banned-terms guard: clean"
+      - name: Changelog stub guard
+        # Every tracked CHANGELOG.md is the Keep-a-Changelog header with one empty
+        # Unreleased section — byte-identical to the stub written below.
+        run: |
+          set -u
+          stub="$(mktemp)"
+          cat > "${stub}" <<'STUB'
+          # Changelog
+
+          All notable changes to this project will be documented in this file.
+
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+          ## [Unreleased]
+          STUB
+          mapfile -d '' -t files < <(git ls-files -z -- 'CHANGELOG.md' '*/CHANGELOG.md')
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::error::git ls-files found no CHANGELOG.md — the scan would be vacuous"
+            exit 1
+          fi
+          status=0
+          for f in "${files[@]}"; do
+            if ! cmp -s "${f}" "${stub}"; then
+              echo "::error::${f} differs from the canonical changelog stub"
+              status=1
+            fi
+          done
+          if [[ ${status} -ne 0 ]]; then
+            exit 1
+          fi
+          echo "changelog stub guard: clean (${#files[@]} file(s))"
 
   # Dry-run resolve the image's PyPI manifest BEFORE any docker build. The image
   # pins every first-party package independently in docker/pypi-requirements.txt,
