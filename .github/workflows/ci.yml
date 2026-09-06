@@ -21,6 +21,22 @@ env:
   IMAGE_REF: tai-ci:${{ github.sha }}
 
 jobs:
+  # An identical tree already proven green by a pull-request run is not re-tested; the run still concludes success for the release gate.
+  reuse:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
+    steps:
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
+        with:
+          concurrent_skipping: never
+          skip_after_successful_duplicate: 'true'
+          do_not_skip: '["pull_request", "workflow_dispatch", "schedule"]'
+
   # Dockerfile lint. Covers the release image AND the session images
   # (sandbox-images/claude-code, sandbox-images/exec) — every shipped Dockerfile is
   # gated. The release Dockerfile uses the docker/dockerfile:1.7-labs frontend
@@ -28,6 +44,8 @@ jobs:
   # hadolint (2.12.0) rejects it as an invalid flag, v3.3.0's (2.13.x) parses it.
   # fail-fast off so every Dockerfile's findings surface, not just the first to fail.
   hadolint-scan:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -47,8 +65,8 @@ jobs:
   # every added Dockerfile. This summary is the stable required "hadolint" context;
   # it fails if any leg failed or was cancelled (and passes only when all ran).
   hadolint:
-    needs: hadolint-scan
-    if: ${{ !cancelled() }}
+    needs: [reuse, hadolint-scan]
+    if: ${{ needs.reuse.outputs.should_skip != 'true' && !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: All Dockerfile lints green
@@ -62,6 +80,8 @@ jobs:
   # assembled from fragments so this workflow file itself carries no contiguous
   # banned term for the scan to trip on.
   banned-terms:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,6 +155,8 @@ jobs:
   # any conflicting/unsatisfiable pin, and build-smoke is gated on it so a stale or
   # self-contradicting manifest can never reach the image build.
   resolve-manifest:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -173,7 +195,8 @@ jobs:
   # image is saved and handed to the kind job so it is built once. Gated on
   # resolve-manifest so the manifest is proven satisfiable before the build.
   build-smoke:
-    needs: resolve-manifest
+    needs: [reuse, resolve-manifest]
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -219,6 +242,8 @@ jobs:
   # `config --profiles` discovers each file's profiles with no hardcoded list.
   # When no files match, the job passes with a clear notice.
   compose-config:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -295,6 +320,8 @@ jobs:
   # When charts/tai is absent they are skipped rather than failing, so a
   # checkout without the chart still reports green.
   detect-chart:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
     runs-on: ubuntu-24.04
     outputs:
       present: ${{ steps.check.outputs.present }}
@@ -311,8 +338,8 @@ jobs:
 
   # helm lint + template matrix + kind install test. Gated on the chart existing.
   helm:
-    needs: [detect-chart, build-smoke]
-    if: needs.detect-chart.outputs.present == 'true'
+    needs: [reuse, detect-chart, build-smoke]
+    if: ${{ needs.reuse.outputs.should_skip != 'true' && needs.detect-chart.outputs.present == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
