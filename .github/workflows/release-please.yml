@@ -1,7 +1,10 @@
 name: release-please
 
+# Tags exist only for commits whose full `ci` succeeded on main.
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -15,6 +18,10 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     permissions:
       contents: write # push the release PR branch; create the tag + GitHub Release
       pull-requests: write # open and update the release PR
