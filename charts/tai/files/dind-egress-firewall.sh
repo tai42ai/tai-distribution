@@ -21,7 +21,7 @@
 #     sandbox control network but any deployment infra reachable via the HOST's
 #     own routing (e.g. an in-VPC datastore at 10.x off this engine's ENI), and
 #     cloud metadata 169.254.169.254. Public internet stays OPEN (egress default
-#     is OPEN by ruling — NOT an Anthropic-only allowlist; that hardening is
+#     is OPEN by design — NOT an Anthropic-only allowlist; that hardening is
 #     offered in docs, not forced here).
 #   - The catch: the rootless daemon's OWN egress plumbing rides private space
 #     too. With `rootlesskit --net=vpnkit`, vpnkit transparently proxies inner

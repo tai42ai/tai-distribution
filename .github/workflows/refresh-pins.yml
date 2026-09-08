@@ -185,7 +185,7 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name "tai42-dev"
-          git config user.email "dev@tai42.ai"
+          git config user.email "oss@tai42.ai"
           git checkout -B refresh-pins
           git add docker/pypi-requirements.txt
           git commit -m "fix(image): track the latest platform releases"

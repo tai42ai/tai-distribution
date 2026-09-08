@@ -11,7 +11,7 @@ Honest residual: NetworkPolicy egress `ipBlock` enforcement is CNI-dependent
 on some) — which is why the engine pod ALSO programs its own dind-netns egress
 firewall as the primary, CNI-independent backstop (the pod's container command runs
 the firewall init at daemon start; see sandbox-firewall-configmap.yaml). This policy
-is the cluster-native second layer. Egress default is OPEN by ruling, so this ALLOWS
+is the cluster-native second layer. Egress default is OPEN by design, so this ALLOWS
 the internet and denies only the deployment-internal ranges + metadata — it is not an
 allowlist.
 */ -}}

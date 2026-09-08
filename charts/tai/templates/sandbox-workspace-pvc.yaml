@@ -1,5 +1,5 @@
 {{- /*
-Durable sandbox workspace storage — the seam the `persistent` session tier
+Durable sandbox workspace storage — the durable store the `persistent` session tier
 consumes. Container mode and direct/host mode are mutually exclusive, so at most
 one of these claims renders.
 
