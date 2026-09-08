@@ -175,12 +175,46 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # into a source build. (Measured by resolving the pinned set, not assumed.)
 FROM uv-base AS venv-pypi
 ARG VERSION
+# Propagation window for a freshly published first-party version, mirroring
+# .github/workflows/ci.yml's PYPI_PROPAGATION_ATTEMPTS/PYPI_PROPAGATION_SLEEP.
+# refresh-pins can open its PR seconds after the fleet publishes, before PyPI's
+# index has propagated the new versions to every mirror; the resolve-manifest
+# job already retries across this window, and this install must too or a version
+# resolvable there is still invisible here.
+ARG PYPI_PROPAGATION_ATTEMPTS=10
+ARG PYPI_PROPAGATION_SLEEP=60
 COPY docker/pypi-requirements.txt /tmp/pypi-requirements.txt
+# --refresh-package the first-party tai42-* names so uv revalidates their simple
+# -index metadata against PyPI every attempt instead of trusting the cache mount
+# (a build seconds after a publish would otherwise reuse a stale index snapshot
+# that predates the new version). The cache mount stays: it still serves every
+# wheel and every already-fresh package, so only the first-party metadata is
+# re-fetched. Retry across the propagation window so a still-propagating publish
+# waits instead of failing the build; a genuinely unsatisfiable pin still reds.
+# Flags accumulate as positional parameters ("$@", always quoted) read straight
+# from the requirements file — no word-split of an unquoted string.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
-      -r /tmp/pypi-requirements.txt \
-      "msgpack>=1.2.1" \
-      "setuptools>=78.1.1"
+    set -eu; \
+    set --; \
+    while IFS= read -r name; do \
+      case "$name" in \
+        tai42-*) set -- "$@" --refresh-package "${name%%[[=]*}" ;; \
+      esac; \
+    done < /tmp/pypi-requirements.txt; \
+    for attempt in $(seq 1 "$PYPI_PROPAGATION_ATTEMPTS"); do \
+      if uv pip install "$@" --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
+          -r /tmp/pypi-requirements.txt \
+          "msgpack>=1.2.1" \
+          "setuptools>=78.1.1"; then \
+        exit 0; \
+      fi; \
+      echo "install attempt $attempt failed; PyPI's index may still be propagating a fresh publish" >&2; \
+      if [ "$attempt" -lt "$PYPI_PROPAGATION_ATTEMPTS" ]; then \
+        sleep "$PYPI_PROPAGATION_SLEEP"; \
+      fi; \
+    done; \
+    echo "docker/pypi-requirements.txt did not install after $PYPI_PROPAGATION_ATTEMPTS attempts" >&2; \
+    exit 1
 
 FROM venv-${SOURCE} AS venv
 

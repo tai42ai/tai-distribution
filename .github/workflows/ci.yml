@@ -150,6 +150,8 @@ jobs:
           build-args: |
             SOURCE=pypi
             STUDIO_REF=${{ steps.studio.outputs.ref }}
+            PYPI_PROPAGATION_ATTEMPTS=${{ env.PYPI_PROPAGATION_ATTEMPTS }}
+            PYPI_PROPAGATION_SLEEP=${{ env.PYPI_PROPAGATION_SLEEP }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       # Fail on FIXABLE critical/high only (--ignore-unfixed): unfixed base-image
