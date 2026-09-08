@@ -30,12 +30,11 @@ helm template tai charts/tai
 ## Comments and docs
 
 Terse, constraint-only, present tense. State the constraint and why it holds, not
-what changed. No history notes, no plan/ticket/mission references.
+what changed. No history notes.
 
 ## Rules
 
-- No `CHANGELOG.md` edits: notes are generated onto the GitHub Release. Do not add
-  or maintain a changelog file.
+- Release notes are generated onto the GitHub Release by release-please.
 - Loud errors: a failure fails the run. No silent fallbacks, no `|| true`, no
   swallowed exceptions, no compatibility shims.
 - The workflows under `.github/workflows/` are the source of truth for commands;

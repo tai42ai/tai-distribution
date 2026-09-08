@@ -55,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name "tai42-dev"
-          git config user.email "dev@tai42.ai"
+          git config user.email "oss@tai42.ai"
           git checkout -B refresh-studio-ref
           git add docker/STUDIO_REF
           git commit -m "fix(image): pin studio to ${SHA}"

@@ -540,12 +540,12 @@ services:
   # address postgres/redis/minio; serve+backend reach its mTLS control API on
   # tcp://sandbox-engine:2376 over sandbox-ctrl.
   #
-  # ISOLATION INVARIANT (README design F.19): a session is an inner container of
+  # ISOLATION INVARIANT: a session is an inner container of
   # this daemon, NAT'd out through the engine's netns for internet egress and
   # reachable to NOTHING else of the deployment — not serve, backend, the
   # datastores, nor the control API (it holds no client cert). The network split,
   # the dind egress firewall (below), and mTLS on the control API ENFORCE this
-  # deny-by-default; PLAN_5's negative test confirms it.
+  # deny-by-default.
   #
   # ENGINE POSTURE — privileged CONTAINER, ROOTLESS daemon, root-installed firewall.
   # dockerd itself runs ROOTLESS (uid 1000) via rootlesskit, so inner sessions stay
@@ -580,14 +580,14 @@ services:
   # is a tcp:// endpoint over mTLS), or use tai42-sandbox-local (no isolation) on a
   # trusted single-tenant box.
   #
-  # DURABLE BLOCK STORE (reciprocal dependency): PLAN_3 creates/adopts the
-  # persistent tai-sbx-<workspace_key> volumes ON this engine; they are docker
+  # DURABLE BLOCK STORE (reciprocal dependency): the sandbox engine creates/adopts
+  # the persistent tai-sbx-<workspace_key> volumes ON this engine; they are docker
   # volumes INSIDE this daemon, so they physically live in its /var/lib/docker
   # tree. Persisting that tree on the tai-sandbox-engine-data named volume is
-  # what makes PLAN_3's durability="persistent" tier REAL across an engine
-  # recycle — PLAN_3 names the seam, this file owns the block storage it lives
-  # on. Ephemeral sessions ride anonymous inner volumes that die with their
-  # container (no durable footprint).
+  # what makes the durability="persistent" tier REAL across an engine
+  # recycle — the sandbox engine declares the persistent tier, this file owns the
+  # block storage it lives on. Ephemeral sessions ride anonymous inner volumes
+  # that die with their container (no durable footprint).
   #
   # BUILD-TIME RE-VERIFY (STOP-and-surface): confirm the pinned rootless image can
   # BOTH self-generate the client certs AND program its own inner-bridge firewall on
@@ -627,7 +627,7 @@ services:
       # dind self-generates the CA + server + CLIENT certs under this dir; the
       # client dir ($DOCKER_TLS_CERTDIR/client) holds cert.pem/key.pem/ca.pem —
       # the three filenames serve+backend consume RO at /certs/client. Byte-for-
-      # byte the filenames PLAN_3's provider defaults (tls_cert/key/ca_path).
+      # byte the filenames the sandbox provider defaults to (tls_cert/key/ca_path).
       DOCKER_TLS_CERTDIR: /certs
     # sandbox-ctrl ONLY — the engine is deliberately off the datastore network.
     networks:
@@ -676,7 +676,7 @@ services:
 # `default` (postgres/redis/metrics/minio/rabbitmq/redis-agents/db-migrate).
 networks:
   default:
-  # Server-side sandbox control path (§ sandbox-ctrl, README design F.19): ONLY
+  # Server-side sandbox control path (§ sandbox-ctrl): ONLY
   # serve, backend, and sandbox-engine. Splits the engine control API off the
   # datastore network — the engine cannot address postgres/redis/minio, and a
   # session (an inner container of the daemon, never on any compose network)
@@ -692,7 +692,7 @@ volumes:
   tai-rabbitmq-data:
   tai-redis-agents-data:
   # Sandbox durable block store: the rootless-dind daemon's /var/lib/docker tree,
-  # where PLAN_3's persistent tai-sbx-<workspace_key> inner volumes live — makes
+  # where the sandbox engine's persistent tai-sbx-<workspace_key> inner volumes live — makes
   # durability="persistent" survive an engine recycle (the reciprocal dependency
   # stated on the sandbox-engine service).
   tai-sandbox-engine-data:
