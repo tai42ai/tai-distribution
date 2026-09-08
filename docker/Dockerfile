@@ -191,15 +191,18 @@ COPY docker/pypi-requirements.txt /tmp/pypi-requirements.txt
 # wheel and every already-fresh package, so only the first-party metadata is
 # re-fetched. Retry across the propagation window so a still-propagating publish
 # waits instead of failing the build; a genuinely unsatisfiable pin still reds.
+# Flags accumulate as positional parameters ("$@", always quoted) read straight
+# from the requirements file — no word-split of an unquoted string.
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -eu; \
-    refresh_args=""; \
-    for pkg in $(sed -n 's/^\(tai42-[a-z0-9-]*\).*/\1/p' /tmp/pypi-requirements.txt); do \
-      refresh_args="$refresh_args --refresh-package $pkg"; \
-    done; \
+    set --; \
+    while IFS= read -r name; do \
+      case "$name" in \
+        tai42-*) set -- "$@" --refresh-package "${name%%[[=]*}" ;; \
+      esac; \
+    done < /tmp/pypi-requirements.txt; \
     for attempt in $(seq 1 "$PYPI_PROPAGATION_ATTEMPTS"); do \
-      if uv pip install --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
-          $refresh_args \
+      if uv pip install "$@" --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
           -r /tmp/pypi-requirements.txt \
           "msgpack>=1.2.1" \
           "setuptools>=78.1.1"; then \
