@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  # Local-only smoke tag. Built and scanned by `build-smoke`. Never pushed.
+  # Local-only smoke tag. Built and scanned by `build-image`. Never pushed.
   IMAGE_REF: tai-ci:${{ github.sha }}
   # PyPI index propagation window for a freshly published first-party version.
   # refresh-pins can open its PR seconds after the fleet publishes, before the
@@ -27,6 +27,73 @@ env:
   PYPI_PROPAGATION_SLEEP: '60'
 
 jobs:
+  # Classify the push/PR as a version-only bump (a release-please train branch, or
+  # a diff that only touches CHANGELOG.md, .release-please-manifest.json, and the
+  # version stamps of manifests — the release-please x-release-please-version lines
+  # in docker/Dockerfile and charts/tai/Chart.yaml included). The heavy lanes
+  # (smoke image build, PyPI manifest resolve) gate on this output so a release
+  # train and the version-bump merge to main do not rebuild the smoke image for a
+  # change that alters no shipped code — the tag release workflow builds and
+  # publishes the real images. Fail-safe: any case it cannot
+  # classify leaves version_only=false, so the heavy lanes run.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      version_only: ${{ steps.classify.outputs.version_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          emit() { echo "version_only=$1" >> "$GITHUB_OUTPUT"; echo "version_only=$1"; }
+
+          # A release-please train branch only ever carries version + changelog bumps.
+          if [[ "${HEAD_REF}" == release-please--branches--* ]]; then
+            emit true; exit 0
+          fi
+
+          case "${EVENT_NAME}" in
+            pull_request) base="${PR_BASE_SHA}"; head="${PR_HEAD_SHA}" ;;
+            push) base="${PUSH_BEFORE}"; head="${GITHUB_SHA}" ;;
+            *) emit false; exit 0 ;;
+          esac
+
+          # No usable base (branch creation, force-push, first push) => run heavy.
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then emit false; exit 0; fi
+          if ! git rev-parse -q --verify "${base}^{commit}" >/dev/null; then emit false; exit 0; fi
+
+          mapfile -t files < <(git diff --name-only "${base}" "${head}")
+          if [[ ${#files[@]} -eq 0 ]]; then emit false; exit 0; fi
+
+          version_only=true
+          for f in "${files[@]}"; do
+            [[ -z "${f}" ]] && continue
+            case "${f}" in
+              CHANGELOG.md|*/CHANGELOG.md|.release-please-manifest.json) continue ;;
+            esac
+            # Every added/removed content line in this file must be a version stamp.
+            while IFS= read -r line; do
+              content="${line:1}"
+              if printf '%s' "${content}" | grep -Eq '^[[:space:]]*version[[:space:]]*=[[:space:]]*"[^"]*"[[:space:]]*$'; then continue; fi
+              if printf '%s' "${content}" | grep -Eq '^[[:space:]]*(version|appVersion)[[:space:]]*:'; then continue; fi
+              if printf '%s' "${content}" | grep -Eq '^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"[^"]*",?[[:space:]]*$'; then continue; fi
+              case "${content}" in *x-release-please-version*) continue ;; esac
+              version_only=false; break
+            done < <(git diff --unified=0 "${base}" "${head}" -- "${f}" | grep -E '^[+-]' | grep -Ev '^(\+\+\+|---)' || true)
+            [[ "${version_only}" == false ]] && break
+          done
+
+          emit "${version_only}"
+
   # An identical tree already proven green by a pull-request run is not re-tested; the run still concludes success for the release gate.
   reuse:
     runs-on: ubuntu-24.04
@@ -86,11 +153,11 @@ jobs:
   # which requires contract>=4.1,<5 + kit>=3.6,<4) is unsatisfiable. That clash is
   # otherwise only discovered deep inside the Dockerfile's pip install — a slow,
   # confusing red image build. Resolving the manifest here fails fast and loud on
-  # any conflicting/unsatisfiable pin, and build-smoke is gated on it so a stale or
+  # any conflicting/unsatisfiable pin, and build-image is gated on it so a stale or
   # self-contradicting manifest can never reach the image build.
   resolve-manifest:
-    needs: reuse
-    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
+    needs: [reuse, changes]
+    if: ${{ needs.reuse.outputs.should_skip != 'true' && needs.changes.outputs.version_only != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,9 +194,9 @@ jobs:
   # `siblings` build context does not exist here. SOURCE=pypi therefore requires
   # every first-party tai42-* package to already be published to PyPI. Gated on
   # resolve-manifest so the manifest is proven satisfiable before the build.
-  build-smoke:
-    needs: [reuse, resolve-manifest]
-    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
+  build-image:
+    needs: [reuse, resolve-manifest, changes]
+    if: ${{ needs.reuse.outputs.should_skip != 'true' && needs.changes.outputs.version_only != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,6 +231,25 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
           vuln-type: os,library
+
+  # Stable required status for branch protection: always runs and stays green when
+  # the smoke image build passed or was skipped (a version-only bump, or the reuse
+  # dedup); it fails only when build-image failed or was cancelled.
+  build-smoke:
+    needs: [changes, build-image]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Smoke image build passed or was skipped
+        env:
+          RESULT: ${{ needs.build-image.result }}
+        run: |
+          set -euo pipefail
+          echo "build-image result: ${RESULT}"
+          case "${RESULT}" in
+            success|skipped) ;;
+            *) echo "::error::build-image ${RESULT}"; exit 1 ;;
+          esac
 
   # Validate every compose file and every profile it declares. Defensive glob:
   # `compose/**/docker-compose.yml` matches every compose file present, and
