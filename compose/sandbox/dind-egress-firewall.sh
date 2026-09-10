@@ -8,9 +8,8 @@
 # The rootless daemon owns its network namespace via a rootlesskit CHILD user
 # namespace; programming DOCKER-USER there needs CAP_SYS_ADMIN over that child
 # userns, which the rootless user (uid 1000) does NOT hold. So this script is
-# run as root — by the privileged container's root entrypoint in compose, and
-# by a privileged root sidecar (shareProcessNamespace) in the k8s chart — while
-# dockerd itself stays rootless. Errors surface LOUDLY (any failed step aborts —
+# run as root — by the privileged container's root entrypoint — while dockerd
+# itself stays rootless. Errors surface LOUDLY (any failed step aborts —
 # never a daemon whose sessions are unconfined).
 #
 # Every agent session is an inner container of this rootless-dind daemon, NAT'd

@@ -9,8 +9,7 @@ reuses this one anchor, so its key set IS the compose deployment-value pinning.
 
 The deployment-infra bare reads (``X_CLASSIFIED_DEPLOYMENT_BARE_READS`` — the
 shape marker + sentinel path) are refused on the X axis at every env writer, not
-on the compose Tier-2 axis, so they are excluded from both sides of the compare —
-the same split the k8s parity test makes for its X-band keys.
+on the compose Tier-2 axis, so they are excluded from both sides of the compare.
 
 Run: python compose/tests/parity_app_env.py   (needs tai42-skeleton importable —
 see the CI job).

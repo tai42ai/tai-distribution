@@ -9,10 +9,6 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "charts/tai/Chart.yaml"
-        },
-        {
-          "type": "generic",
           "path": "docker/Dockerfile"
         }
       ]

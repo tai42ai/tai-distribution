@@ -9,4 +9,3 @@
 ## Checklist
 
 - [ ] Image builds (`docker buildx build -f docker/Dockerfile ...`)
-- [ ] Helm chart lints / installs (`charts/test/kind-install.sh`)

@@ -149,8 +149,8 @@ jobs:
   # per-arch GHCR digests, then cosign-keyless-sign the manifest-list digest in
   # every registry the image publishes to (signatures live in the registry of the
   # signed reference — signing docker.io alone would leave the ghcr mirror
-  # unsigned). Fanned out over the same image list as `build`: the platform image
-  # publishes to BOTH registries; each session image publishes to GHCR only.
+  # unsigned). Fanned out over the same image list as `build`: every image
+  # publishes to BOTH registries, Docker Hub primary and GHCR mirror.
   merge:
     needs: build
     runs-on: ubuntu-24.04
@@ -163,10 +163,10 @@ jobs:
             registries: docker.io/tai42/tai ghcr.io/tai42ai/tai
           - key: sandbox-claude-code
             src: ghcr.io/tai42ai/tai-sandbox-claude-code
-            registries: ghcr.io/tai42ai/tai-sandbox-claude-code
+            registries: docker.io/tai42/tai-sandbox-claude-code ghcr.io/tai42ai/tai-sandbox-claude-code
           - key: sandbox-exec
             src: ghcr.io/tai42ai/tai-sandbox-exec
-            registries: ghcr.io/tai42ai/tai-sandbox-exec
+            registries: docker.io/tai42/tai-sandbox-exec ghcr.io/tai42ai/tai-sandbox-exec
     permissions:
       contents: read
       packages: write # push manifest lists + signatures to GHCR
@@ -246,42 +246,15 @@ jobs:
             cosign sign --yes "${ref}"
           done <<< "${SIGN_REFS}"
 
-  # Whether the Helm chart has landed (gates the chart jobs). The chart
-  # job is gated on this so an early tag still publishes the image.
-  detect-chart:
-    runs-on: ubuntu-24.04
-    outputs:
-      present: ${{ steps.check.outputs.present }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: check
-        run: |
-          if [[ -f charts/tai/Chart.yaml ]]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::charts/tai not present; skipping chart publish + GitHub Release"
-          fi
-
-  # Package + push the chart to GHCR (OCI), cosign-sign it, then cut the GitHub
-  # Release with generated notes and the image SBOM attached.
-  chart:
-    needs: [merge, detect-chart]
-    if: needs.detect-chart.outputs.present == 'true'
+  # Cut the GitHub Release with generated notes and the image SBOM attached.
+  github-release:
+    needs: merge
     runs-on: ubuntu-24.04
     permissions:
       contents: write # create the GitHub Release
-      packages: write # push the chart + its signature to GHCR
-      id-token: write # cosign keyless OIDC
+      packages: read # pull the released image for the SBOM
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v3.16.4
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      # Docker-config GHCR login so cosign (chart signature push) and trivy (SBOM
-      # image pull) both find credentials — `helm registry login` writes only
-      # helm's own config, which neither reads.
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -302,37 +275,6 @@ jobs:
           else
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Package, push, and sign the chart
-        env:
-          # Read from the environment and piped in, so the token never appears
-          # in a command line the runner's process list would expose.
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
-          VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${GHCR_TOKEN}" | helm registry login ghcr.io \
-            --username "${GHCR_USER}" \
-            --password-stdin
-          mkdir -p /tmp/chart
-          # Stamp both from the release tag. The chart and the image it targets
-          # are cut from the same tag in this repository, so the tag is the
-          # chart's version and the app version it ships against; without these
-          # every release would republish Chart.yaml's placeholder and overwrite
-          # the previously published chart.
-          helm package charts/tai \
-            --version "${VERSION}" \
-            --app-version "${VERSION}" \
-            --destination /tmp/chart
-          pkg="$(ls /tmp/chart/tai-*.tgz)"
-          push_out="$(helm push "${pkg}" oci://ghcr.io/tai42ai/charts 2>&1)"
-          echo "${push_out}"
-          digest="$(echo "${push_out}" | awk '/[Dd]igest:/ {print $NF}')"
-          if [[ -z "${digest}" ]]; then
-            echo "ERROR: could not parse chart digest from helm push output" >&2
-            exit 1
-          fi
-          cosign sign --yes "ghcr.io/tai42ai/charts/tai@${digest}"
       # Generate a CycloneDX SBOM of the released multi-arch image to attach to
       # the GitHub Release (in-registry buildx attestations also exist).
       - name: Generate image SBOM

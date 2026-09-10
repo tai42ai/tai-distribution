@@ -23,8 +23,6 @@ the `commitlint` check.
 hadolint docker/Dockerfile
 docker build -f docker/Dockerfile --build-arg SOURCE=pypi --build-arg STUDIO_REF="$(cat docker/STUDIO_REF)" -t tai-ci:local .
 docker compose -f compose/docker-compose.yml config -q
-helm lint charts/tai
-helm template tai charts/tai
 ```
 
 ## Comments and docs

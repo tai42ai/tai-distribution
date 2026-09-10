@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in tai-distribution (container image, Compose bundle, Helm chart, release CI)
+description: Report a defect in tai-distribution (container image, Compose bundle, release CI)
 labels: ["bug"]
 body:
   - type: textarea
@@ -13,7 +13,7 @@ body:
     id: reproduction
     attributes:
       label: Reproduction
-      description: Minimal steps or commands that reproduce the problem (docker run, compose up, helm install, etc.).
+      description: Minimal steps or commands that reproduce the problem (docker run, compose up, etc.).
       render: shell
     validations:
       required: true
@@ -28,7 +28,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: How you are running it (docker / compose / kubernetes), the platform arch, and versions (Docker, Helm, Kubernetes) as relevant.
-      placeholder: "docker.io/tai42/tai:0.1.1, linux/arm64, Docker 27, Kubernetes 1.30 via Helm 3.15"
+      description: How you are running it (docker / compose), the platform arch, and versions (Docker, Compose) as relevant.
+      placeholder: "docker.io/tai42/tai:0.1.1, linux/arm64, Docker 27, Compose 2.29"
     validations:
       required: true

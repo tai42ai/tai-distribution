@@ -1,7 +1,0 @@
-# ci fixture: memory-redis on.
-# The module-capable flow-memory leg enabled: a separate redis:8 StatefulSet for
-# LangGraph flow checkpoint + store, with the checkpoint/store conn strings wired
-# to it automatically (derived from its own service). Core redis stays plain.
-
-memoryRedis:
-  enabled: true

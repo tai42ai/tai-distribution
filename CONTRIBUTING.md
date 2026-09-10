@@ -1,14 +1,14 @@
 # Contributing to tai-distribution
 
 `tai-distribution` is the client distribution for **tai**: the official
-container image, a Docker Compose bundle, a Helm chart, and the release CI that
+container image, a Docker Compose bundle, and the release CI that
 publishes them. It ships artifacts, not a Python package — one version story
 pins every first-party `tai42-*` package.
 
 ## Ground rules
 
 - **One version story.** A distribution tag (`X.Y.Z`) pins the `tai42-*` packages
-  at a matching release; keep the image, chart, and compose bundle in lockstep.
+  at a matching release; keep the image and compose bundle in lockstep.
 - **Release builds pull from PyPI.** The release image installs `tai42-*` from
   PyPI and fetches tai-studio at the SHA in `docker/STUDIO_REF`. Only the dev
   build (`SOURCE=local`) uses local checkouts — the `tai42` monorepo and the
@@ -22,8 +22,6 @@ pins every first-party `tai42-*` package.
 - `docker/Dockerfile` — multi-stage image (`SOURCE=local | pypi`)
 - `docker/STUDIO_REF` — tai-studio commit SHA the release image builds from
 - `compose/` — Docker Compose bundles
-- `charts/tai/` — Helm chart
-- `charts/test/kind-install.sh` — local kind smoke install for the chart
 - `.github/workflows/` — release + CI
 
 ## When does this repo need changes?
@@ -88,12 +86,6 @@ docker buildx build -f docker/Dockerfile \
   --build-context siblings=/path/to/checkouts \
   --build-arg SOURCE=local \
   --load -t docker.io/tai42/tai:latest .
-```
-
-Smoke-test the Helm chart against a local kind cluster:
-
-```sh
-charts/test/kind-install.sh docker.io/tai42/tai:latest
 ```
 
 Before any commit, run a secret scan over the repo (e.g.

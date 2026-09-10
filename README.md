@@ -4,15 +4,15 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 Client distribution for **tai**: the official container image, a Docker Compose
-bundle, a Helm chart, and the release CI that publishes them. One version story
+bundle, and the release CI that publishes them. One version story
 pins every first-party `tai42-*` package.
 
 ## Image
 
 `docker.io/tai42/tai` (primary) · `ghcr.io/tai42ai/tai` (mirror) — one
-minimal-core, multi-arch (amd64 + arm64) image. It ships the platform core plus
-one reference provider per infrastructure kind — local storage, the arq task
-backend, redis identity, and the k8s config provider — and bakes the built
+minimal-core, multi-arch (amd64 + arm64) image. It ships the platform core, the
+agents layer, and the baked reference providers — local storage, the arq task
+backend, redis identity, and both sandbox providers — and bakes the built
 tai-studio SPA, so a single image runs every deployment role. What activates at
 boot is decided by your manifest and environment.
 
@@ -156,8 +156,8 @@ cosign-keyless-signed:
 
 | Image | Carries | Wired by |
 |---|---|---|
-| `ghcr.io/tai42ai/tai-sandbox-claude-code` | `claude-agent-sdk` + its bundled `claude` CLI (no runner code, no credentials) | `TAI_AGENTS_CLAUDE_SESSION_IMAGE` |
-| `ghcr.io/tai42ai/tai-sandbox-exec` | lean `sh` + `python3` + coreutils only (no SDK, no runner code, no credentials) | the `langchain_deep_agent` group's own `session_image` setting |
+| `docker.io/tai42/tai-sandbox-claude-code` (mirror `ghcr.io/tai42ai/tai-sandbox-claude-code`) | `claude-agent-sdk` + its bundled `claude` CLI (no runner code, no credentials) | `TAI_AGENTS_CLAUDE_SESSION_IMAGE` |
+| `docker.io/tai42/tai-sandbox-exec` (mirror `ghcr.io/tai42ai/tai-sandbox-exec`) | lean `sh` + `python3` + coreutils only (no SDK, no runner code, no credentials) | the `langchain_deep_agent` group's own `session_image` setting |
 
 Both are **consumed by digest, never by a bare tag** — every reference is the
 `…@sha256:…` form, and the intended pull posture is cosign signature
@@ -165,7 +165,7 @@ verification:
 
 ```sh
 # In .env / the manifest — pin the exact digest, not a moving tag:
-TAI_AGENTS_CLAUDE_SESSION_IMAGE=ghcr.io/tai42ai/tai-sandbox-claude-code@sha256:<digest>
+TAI_AGENTS_CLAUDE_SESSION_IMAGE=docker.io/tai42/tai-sandbox-claude-code@sha256:<digest>
 ```
 
 The claude session image carries the SDK and its bundled `claude` binary and
@@ -277,7 +277,6 @@ docker/Dockerfile      multi-stage image (SOURCE=local | pypi)
 docker/STUDIO_REF      tai-studio commit SHA the release image builds from
 compose/               Docker Compose bundle (core stack + profiles)
 compose/langfuse/      standalone Langfuse stack (optional monitoring)
-charts/tai/            Helm chart
 .github/workflows/     release + CI
 ```
 
@@ -314,9 +313,7 @@ things in `compose/docker-compose.yml` make that safe:
 ## Self-hosting docs
 
 Transport, environment, and config-provider guidance for running a server for
-real lives in the [deploy guide](https://tai42.ai/guides/deploy). The chart's own
-values, RBAC, and secret handling are documented in
-[`charts/tai/README.md`](./charts/tai/README.md).
+real lives in the [deploy guide](https://tai42.ai/guides/deploy).
 
 ## License
 

@@ -1,6 +1,7 @@
-# The Docker Hub repository overview is versioned in-repo and synced on every
-# change: hub.docker.com renders docker/DOCKERHUB-OVERVIEW.md as the tai42/tai
-# page, so edits go through review here and the page can never drift from main.
+# Each Docker Hub repository overview is versioned in-repo and synced on every
+# change: hub.docker.com renders the DOCKERHUB-OVERVIEW.md beside each image's
+# Dockerfile as that repository's page, so edits go through review here and a
+# page can never drift from main.
 name: hub-description
 
 on:
@@ -8,6 +9,7 @@ on:
     branches: [main]
     paths:
       - docker/DOCKERHUB-OVERVIEW.md
+      - docker/sandbox-images/*/DOCKERHUB-OVERVIEW.md
       - .github/workflows/hub-description.yml
 
 permissions: {}
@@ -16,6 +18,25 @@ jobs:
   sync:
     if: github.repository == 'tai42ai/tai-distribution'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - repository: tai42/tai
+            readme: docker/DOCKERHUB-OVERVIEW.md
+            short-description: >-
+              tai42 platform image: minimal core, multi-arch — serve
+              (API+Studio), worker, and metrics in one.
+          - repository: tai42/tai-sandbox-claude-code
+            readme: docker/sandbox-images/claude-code/DOCKERHUB-OVERVIEW.md
+            short-description: >-
+              tai42 Claude Code sandbox session image: claude-agent-sdk and
+              its bundled claude CLI, nothing else.
+          - repository: tai42/tai-sandbox-exec
+            readme: docker/sandbox-images/exec/DOCKERHUB-OVERVIEW.md
+            short-description: >-
+              tai42 lean sandbox session image: sh, python3, and coreutils,
+              nothing else.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Sync the overview to Docker Hub
@@ -23,8 +44,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: tai42/tai
-          readme-filepath: docker/DOCKERHUB-OVERVIEW.md
-          short-description: >-
-            tai42 platform image: minimal core, multi-arch — serve
-            (API+Studio), worker, and metrics in one.
+          repository: ${{ matrix.image.repository }}
+          readme-filepath: ${{ matrix.image.readme }}
+          short-description: ${{ matrix.image.short-description }}

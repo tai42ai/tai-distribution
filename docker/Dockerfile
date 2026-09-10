@@ -99,10 +99,10 @@ FROM studio-${SOURCE} AS studio
 
 # ---------------------------------------------------------------------------
 # venv build — installs the minimal core plugin set into /opt/tai/venv: the
-# platform core plus one reference provider per infrastructure kind (local
-# storage, arq backend, redis identity, k8s config). Every other channel,
-# storage, backend, connector, verifier, and tool is installed at runtime via
-# the marketplace or baked into a derived image.
+# platform core, the agents layer, and the baked reference providers (local
+# storage, arq backend, redis identity, both sandbox providers). Every other
+# channel, config provider, storage, backend, connector, verifier, and tool is
+# installed at runtime via the marketplace or baked into a derived image.
 # Splits on SOURCE for the same reason as studio: venv-local COPYs the tai42/
 # monorepo member trees and installs from them; venv-pypi installs pinned wheels
 # and never references the siblings context (which does not exist on CI).
@@ -139,7 +139,6 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/storage-local/   /src/storage-local/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/backend-arq/     /src/backend-arq/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/identity-redis/  /src/identity-redis/
-COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/config-k8s/      /src/config-k8s/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/sandbox-docker/  /src/sandbox-docker/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/sandbox-local/   /src/sandbox-local/
 # The msgpack/setuptools floors hold the transitive versions above the CVEs the
@@ -155,7 +154,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/storage-local \
       /src/backend-arq \
       /src/identity-redis \
-      /src/config-k8s \
       /src/sandbox-docker \
       /src/sandbox-local \
       "msgpack>=1.2.1" \

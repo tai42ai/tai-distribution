@@ -1,9 +1,9 @@
 # tai
 
-The official image of the [tai42 platform](https://github.com/tai42ai/tai42) — one minimal-core, multi-arch (amd64 + arm64) image that runs every deployment role. It ships the platform core plus one reference provider per infrastructure kind (local storage, the arq task backend, redis identity, the k8s config provider) and bakes the built Studio SPA. What activates at boot is decided by your manifest and environment.
+The official image of the [tai42 platform](https://github.com/tai42ai/tai42) — one minimal-core, multi-arch (amd64 + arm64) image that runs every deployment role. It ships the platform core, the agents layer, and the baked reference providers (local storage, the arq task backend, redis identity, both sandbox providers) and bakes the built Studio SPA. What activates at boot is decided by your manifest and environment.
 
 - **Docs:** [docs.tai42.ai](https://docs.tai42.ai)
-- **Distribution (Compose bundle, Helm chart, release CI):** [tai42ai/tai-distribution](https://github.com/tai42ai/tai-distribution)
+- **Distribution (Compose bundle, release CI):** [tai42ai/tai-distribution](https://github.com/tai42ai/tai-distribution)
 - **Mirror:** `ghcr.io/tai42ai/tai`
 
 ## How to use this image

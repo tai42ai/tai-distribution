@@ -15,13 +15,13 @@
 # package missing a wheel must fail the build loudly rather than fall back to a
 # source build.
 #
-# The minimal core: the platform packages plus one reference provider per
-# infrastructure kind (local storage, arq backend, redis identity, k8s config).
-# Every other channel, storage, backend, connector, verifier, and tool is
-# installed at runtime via the marketplace or baked into a derived image, and is
-# deliberately NOT listed here. This set MUST stay identical to the venv-local
-# install set in docker/Dockerfile — the image ships one roster regardless of
-# SOURCE.
+# The minimal core: the platform packages, the agents layer, and the baked
+# reference providers (local storage, arq backend, redis identity, and both
+# sandbox providers). Every other channel, config provider, storage, backend,
+# connector, verifier, and tool is installed at runtime via the marketplace or
+# baked into a derived image, and is deliberately NOT listed here. This set MUST
+# stay identical to the venv-local install set in docker/Dockerfile — the image
+# ships one roster regardless of SOURCE.
 tai42-contract==8.2.1
 tai42-kit==3.12.0
 tai42-toolbox==2.0.8
@@ -31,6 +31,5 @@ tai42-agents==5.5.3
 tai42-storage-local==1.1.4
 tai42-backend-arq==2.1.3
 tai42-identity-redis==1.2.3
-tai42-config-k8s==1.1.3
 tai42-sandbox-docker==1.1.3
 tai42-sandbox-local==1.1.3

@@ -3,7 +3,7 @@
 # On every push to `main` this fires a `repository_dispatch` at the org's
 # tai-docs repo, which triggers the `regenerate` job in tai-docs' docs.yml.
 # tai-docs consumes this repository as a source: its generators derive the
-# self-host reference (compose/helm defaults, the ALWAYS_PUBLIC compose
+# self-host reference (compose defaults, the ALWAYS_PUBLIC compose
 # comparison) from this repo's `main` HEAD, so a change here must regenerate
 # the reference just as a monorepo or Studio change does.
 #

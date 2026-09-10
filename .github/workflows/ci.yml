@@ -16,8 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  # Local-only smoke tag. Built once by `build-smoke`, handed to the kind job as
-  # a saved tarball. Never pushed.
+  # Local-only smoke tag. Built and scanned by `build-smoke`. Never pushed.
   IMAGE_REF: tai-ci:${{ github.sha }}
   # PyPI index propagation window for a freshly published first-party version.
   # refresh-pins can open its PR seconds after the fleet publishes, before the
@@ -126,8 +125,7 @@ jobs:
   # Build the release-shaped image (SOURCE=pypi) for amd64 and scan it. Never
   # SOURCE=local: a hosted runner checks out only this repository, so the
   # `siblings` build context does not exist here. SOURCE=pypi therefore requires
-  # every first-party tai42-* package to already be published to PyPI. The built
-  # image is saved and handed to the kind job so it is built once. Gated on
+  # every first-party tai42-* package to already be published to PyPI. Gated on
   # resolve-manifest so the manifest is proven satisfiable before the build.
   build-smoke:
     needs: [reuse, resolve-manifest]
@@ -166,13 +164,6 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
           vuln-type: os,library
-      - name: Save image for the kind job
-        run: docker save "${IMAGE_REF}" -o /tmp/tai-image.tar
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: tai-image
-          path: /tmp/tai-image.tar
-          retention-days: 1
 
   # Validate every compose file and every profile it declares. Defensive glob:
   # `compose/**/docker-compose.yml` matches every compose file present, and
@@ -252,93 +243,3 @@ jobs:
             fi
           done
           python compose/tests/parity_app_env.py
-
-  # Detect whether the Helm chart is present; the helm jobs are gated on this.
-  # When charts/tai is absent they are skipped rather than failing, so a
-  # checkout without the chart still reports green.
-  detect-chart:
-    needs: reuse
-    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
-    runs-on: ubuntu-24.04
-    outputs:
-      present: ${{ steps.check.outputs.present }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: check
-        run: |
-          if [[ -f charts/tai/Chart.yaml ]]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::charts/tai not present; skipping helm lint/template/kind-install"
-          fi
-
-  # helm lint + template matrix + kind install test. Gated on the chart existing.
-  helm:
-    needs: [reuse, detect-chart, build-smoke]
-    if: ${{ needs.reuse.outputs.should_skip != 'true' && needs.detect-chart.outputs.present == 'true' }}
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: v3.16.4
-      - name: helm lint
-        run: helm lint charts/tai
-      # The in-pod dind egress firewall is a security control shipped in two
-      # forced-duplicate copies: Helm cannot .Files.Get outside the chart dir, so
-      # the chart carries its own byte-for-byte copy of the compose reference.
-      # A silent drift would leave the k8s in-pod firewall weaker than the compose
-      # one, undetectably — assert the two are byte-identical (diff exits non-zero
-      # on any drift, failing CI).
-      - name: sandbox firewall byte-identity (chart == compose)
-        run: diff --unified charts/tai/files/dind-egress-firewall.sh compose/sandbox/dind-egress-firewall.sh
-      # Template matrix — bare defaults plus each scenario fixture the chart ships
-      # in its conventional ci/ values dir.
-      - name: helm template matrix
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          echo "== helm template (defaults) =="
-          helm template tai charts/tai >/dev/null
-          fixtures=(charts/tai/ci/*-values.yaml)
-          if [[ ${#fixtures[@]} -eq 0 ]]; then
-            echo "::warning::no charts/tai/ci/*-values.yaml fixtures found; rendered defaults only"
-          fi
-          for vf in "${fixtures[@]}"; do
-            echo "== helm template -f ${vf} =="
-            helm template tai charts/tai -f "${vf}" >/dev/null
-          done
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.13'
-      # k8s tier-2 refusal parity: render the FULL pinned pod env of both app
-      # deployments (all features on) and assert its recycle-pinned subset equals
-      # the product's k8s refusal list. Installs tai42-skeleton at the version the
-      # shipped image pins (docker/pypi-requirements.txt) so the test can import
-      # config.recycle_policy — no image extras needed; needs only helm (set up
-      # above), not a cluster.
-      - name: k8s pod-env refusal parity
-        run: |
-          set -euo pipefail
-          ver="$(grep -oP '^tai42-skeleton(\[[^]]*\])?==\K.*' docker/pypi-requirements.txt)"
-          test -n "${ver}" || { echo "could not read tai42-skeleton pin from docker/pypi-requirements.txt" >&2; exit 1; }
-          python -m pip install --disable-pip-version-check "tai42-skeleton==${ver}" pyyaml
-          python charts/tai/tests/parity_pod_env.py
-      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
-      - name: Install kind
-        run: |
-          set -euo pipefail
-          KIND_VERSION=v0.32.0
-          KIND_SHA256=50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
-          curl -fsSLo /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          echo "${KIND_SHA256}  /tmp/kind" | sha256sum -c -
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: tai-image
-          path: /tmp
-      - name: Load smoke image
-        run: docker load -i /tmp/tai-image.tar
-      - name: kind install test
-        run: charts/test/kind-install.sh "${IMAGE_REF}"

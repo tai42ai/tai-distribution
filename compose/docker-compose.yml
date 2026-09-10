@@ -162,8 +162,8 @@ x-tai-app-env: &tai-app-env
   # minio/rabbitmq unguarded-substitution pattern — never a `${VAR:?}` compose
   # guard, which would also block the default profile-less stack). Both keys
   # COEXIST here even though the scalar manifest `sandbox_module` names exactly
-  # one provider at runtime: anchor presence is chart-values scope, so the
-  # unselected provider's key stays empty/unused and harmless. Shared by
+  # one provider at runtime: the anchor carries both keys, so the unselected
+  # provider's key stays empty/unused and harmless. Shared by
   # serve/backend/metrics/db-migrate through this one anchor.
   #   SANDBOX_DOCKER_HOST — the sandbox-docker engine control endpoint
   #     (tcp://sandbox-engine:2376, `sandbox` profile). The mTLS client certs
@@ -187,7 +187,7 @@ services:
     image: *tai-image
     logging: *default-logging
     # One-shot migrate on the app image; a memory ceiling and a cpu cap bound a
-    # single service so it cannot starve the host (mirrors the chart's app limits).
+    # single service so it cannot starve the host.
     mem_limit: 512m
     cpus: 1.0
     command: ["db", "migrate"]
@@ -205,8 +205,8 @@ services:
     # Grace before SIGKILL on stop/recycle — >= the serving surface's in-flight
     # drain budget so uvicorn can finish live requests before the kill.
     stop_grace_period: 300s
-    # Memory ceiling above the chart's 1Gi single-worker limit because compose
-    # serve runs 2 workers; cpu cap bounds the busiest service on a single host.
+    # Memory ceiling sized for the 2 uvicorn workers serve runs; cpu cap bounds
+    # the busiest service on a single host.
     mem_limit: 1536m
     cpus: 2.0
     # Explicit multi-worker: serve's own default is 1 worker (silently
@@ -267,7 +267,7 @@ services:
     # budget (arq job_completion_wait / celery warm-drain) so the current job
     # finishes before the kill.
     stop_grace_period: 300s
-    # Matches the chart's 1Gi backend limit; cpu cap bounds the worker on a host.
+    # Memory ceiling for one worker; cpu cap bounds the worker on a host.
     mem_limit: 1024m
     cpus: 1.5
     command: ["backend", "worker"]
@@ -278,8 +278,7 @@ services:
       # names its Prometheus files by PID in its own PID namespace and would
       # collide with serve's workers on identical filenames if they shared a
       # volume. These backend metrics are NOT scraped in the compose quickstart
-      # (the metrics reader below rides serve's volume). In the chart they ARE
-      # exposed — the backend pod carries its own metrics sidecar.
+      # (the metrics reader below rides serve's volume).
       - tai-prometheus-backend:/home/tai
       # Sandbox mTLS client certs (RO), shared from sandbox-engine: the
       # sandbox-docker provider reads cert.pem/key.pem/ca.pem from this fixed
@@ -321,7 +320,7 @@ services:
     image: *tai-image
     logging: *default-logging
     restart: unless-stopped
-    # Matches the chart's 256Mi metrics-sidecar limit; small cpu cap.
+    # Small memory ceiling for the metrics reader; small cpu cap.
     mem_limit: 256m
     cpus: 0.5
     # backend_metrics_host defaults to 127.0.0.1 (unreachable via the container
@@ -355,7 +354,7 @@ services:
     image: postgres:16-alpine
     logging: *default-logging
     restart: unless-stopped
-    # Matches the chart's 512Mi postgres limit; cpu cap bounds the DB on a host.
+    # Memory ceiling for the quickstart DB; cpu cap bounds it on a host.
     mem_limit: 512m
     cpus: 1.0
     # Creates the `tai` database on first boot (POSTGRES_DB). No working default
@@ -378,12 +377,12 @@ services:
     image: redis:7-alpine
     logging: *default-logging
     restart: unless-stopped
-    # Matches the chart's 256Mi redis limit; small cpu cap.
+    # Small memory ceiling for the quickstart redis; small cpu cap.
     mem_limit: 256m
     cpus: 0.5
     # Internal-only (never host-published), so it runs without auth to keep the
     # connection URLs simple; the app reaches it over the compose network.
-    # --appendonly yes for durability parity with the chart's redis: feature
+    # --appendonly yes for durability: feature
     # stores (rate limits, tool runs, interactions, hooks, …) live here, so the
     # AOF must survive a restart rather than losing everything since the last
     # RDB snapshot.
