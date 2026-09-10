@@ -1,11 +1,15 @@
 name: release-please
 
-# Tags exist only for commits whose full `ci` succeeded on main.
+# release-please runs on every push to main and on manual dispatch, opening or
+# updating the release-train PR; that PR's own CI is the merge gate. Merging the
+# train pushes its merge commit, which re-triggers this workflow to mint the
+# tag; release-please is idempotent, so an already-present tag is a no-op. The
+# tag lane (release.yml) builds and ships the release images; it fires on the
+# tag push, not on this workflow.
 on:
-  workflow_run:
-    workflows: [ci]
-    types: [completed]
+  push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,10 +22,8 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+    # Release automation runs on the org repo only, never in a fork.
+    if: github.repository == 'tai42ai/tai-distribution'
     permissions:
       contents: write # push the release PR branch; create the tag + GitHub Release
       pull-requests: write # open and update the release PR
