@@ -36,6 +36,11 @@ set -eu
 log() { echo "[dind-egress-firewall] $*" >&2; }
 fail() { log "FATAL: $*"; exit 1; }
 
+# Clear any marker a prior boot left in the writable layer: a restart recreates
+# the netns (DOCKER-USER rules gone) but the file persists, and the healthcheck
+# must gate on THIS boot's completed install, never a stale one.
+rm -f /tmp/dind-egress-firewall.ready
+
 # Full private + link-local ranges denied to inner sessions.
 PRIVATE_CIDRS="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16"
 
@@ -62,11 +67,28 @@ done
 in_netns() { nsenter -t "$DOCKERD_PID" -n "$@"; }
 
 # The daemon's OWN connected subnets INSIDE its netns — the inner-session bridge
-# (docker0) and the rootless vpnkit uplink (tap0, e.g. 192.168.65.0/24). These
-# carry the sandbox's own egress + DNS plumbing and fall inside the private
-# ranges above, so they are ACCEPTed first. Derived from the daemon's routes so
-# they track whatever docker0/vpnkit actually use.
-ALLOW_CIDRS="$(in_netns ip -o route show scope link 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.' || true)"
+# (docker0) and the rootless vpnkit uplink (tap0, e.g. 192.168.65.0/24) — carry
+# the sandbox's own egress + DNS plumbing and fall inside the private ranges
+# denied below, so they are ACCEPTed first (above the DROPs) or egress + DNS die.
+# The uplink is the DEFAULT ROUTE's device, and rootlesskit finishes configuring
+# it AFTER dockerd first answers, so a single snapshot taken the instant the
+# DOCKER-USER chain appears can catch docker0 alone and then DROP the session's
+# own resolver on the still-unconfigured uplink. WAIT until the default-route
+# uplink's on-link subnet exists, THEN take the allow-set (both subnets), so the
+# ACCEPT for the resolver's subnet is never missed. Derived from the routes so the
+# set tracks whatever docker0/vpnkit actually use.
+i=0
+ALLOW_CIDRS=""
+while : ; do
+  UPLINK_DEV="$(in_netns ip -o route show default 2>/dev/null | awk '{for (k=1;k<NF;k++) if ($k=="dev") {print $(k+1); exit}}')"
+  if [ -n "$UPLINK_DEV" ] && in_netns ip -o route show scope link dev "$UPLINK_DEV" 2>/dev/null | grep -qE '^[0-9]+\.'; then
+    ALLOW_CIDRS="$(in_netns ip -o route show scope link 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.' || true)"
+    break
+  fi
+  i=$((i + 1))
+  [ "$i" -gt 120 ] && fail "the daemon's default-route uplink subnet never appeared within 120s"
+  sleep 1
+done
 [ -n "$ALLOW_CIDRS" ] || fail "could not resolve the daemon's own subnets to allow"
 log "dockerd pid=$DOCKERD_PID; allow(own) -> $ALLOW_CIDRS; deny(private) -> $PRIVATE_CIDRS"
 
@@ -88,3 +110,8 @@ for cidr in $ALLOW_CIDRS; do add_rule ACCEPT "$cidr"; done
 for cidr in $PRIVATE_CIDRS; do add_rule DROP "$cidr"; done
 
 log "egress firewall active: private ranges + metadata denied (own bridge/uplink allowed), internet OPEN"
+
+# Signal the full ruleset is in place. The healthcheck gates readiness on this
+# marker, so no session is created until BOTH the own-subnet ACCEPTs and the
+# private-range DROPs are installed — never against a half-built chain.
+: > /tmp/dind-egress-firewall.ready

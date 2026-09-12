@@ -647,10 +647,11 @@ services:
     # root via `user: "0:0"`; the firewall `nsenter -n`s into dockerd's rootless
     # netns), then DROP the daemon back to the rootless user via
     # `su rootless -c dockerd-entrypoint.sh`. The firewall backgrounds itself and
-    # waits for dockerd to create DOCKER-USER before installing the rules; the app
-    # only dials the control API after the daemon is up, so the rules are in place
-    # before the first session create succeeds. `exec` inside `su` so signals reach
-    # dockerd; DOCKER_TLS_CERTDIR is re-exported because `su` resets the environment.
+    # waits for dockerd to create DOCKER-USER and configure its uplink before
+    # installing the full ruleset and writing its ready marker; the healthcheck
+    # gates readiness on that marker, so a session create cannot race a half-built
+    # chain. `exec` inside `su` so signals reach dockerd; DOCKER_TLS_CERTDIR is
+    # re-exported because `su` resets the environment.
     entrypoint:
       - sh
       - -c
@@ -658,13 +659,17 @@ services:
         /usr/local/bin/dind-egress-firewall.sh &
         exec su rootless -c 'DOCKER_TLS_CERTDIR=/certs exec dockerd-entrypoint.sh'
       - sh
-    # Ready when the daemon answers over its TLS socket, using the client certs
-    # it generated into /certs/client. Generous start_period covers first-boot
-    # cert generation.
+    # Ready when the daemon answers over its TLS socket using the client certs it
+    # generated into /certs/client AND the inner-bridge egress firewall has
+    # installed its full ruleset (the ready marker the installer writes last).
+    # Gating readiness on the marker keeps a session from being created against a
+    # half-built chain: `--wait` and `depends_on ... service_healthy` cannot see a
+    # healthy engine until the own-subnet ACCEPTs and the private-range DROPs are
+    # both in place. Generous start_period covers first-boot cert generation.
     healthcheck:
       test:
         - "CMD-SHELL"
-        - "docker --tlsverify --tlscacert /certs/client/ca.pem --tlscert /certs/client/cert.pem --tlskey /certs/client/key.pem -H tcp://127.0.0.1:2376 info >/dev/null 2>&1"
+        - "docker --tlsverify --tlscacert /certs/client/ca.pem --tlscert /certs/client/cert.pem --tlskey /certs/client/key.pem -H tcp://127.0.0.1:2376 info >/dev/null 2>&1 && test -f /tmp/dind-egress-firewall.ready"
       interval: 10s
       timeout: 10s
       retries: 30
