@@ -70,19 +70,25 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Only the platform image consumes SOURCE/VERSION/STUDIO_REF; the session
-      # images build from base + pip install with none. Assemble the build-args
-      # once so the two build steps below stay identical across the image list.
+      # Every image consumes SECURITY_UPDATES_EPOCH (it busts the security-update
+      # layer's cache so the scanned-and-pushed image always carries the latest
+      # Debian uploads); only the platform image also consumes
+      # SOURCE/VERSION/STUDIO_REF, the session images build from base + pip
+      # install. Assemble the build-args once so the two build steps below stay
+      # identical across the image list — the shared value also keeps the scanned
+      # bits and the pushed bits the same layer.
       - name: Assemble build args
         id: bargs
         env:
           PLATFORM_ARGS: ${{ matrix.image.platform_build_args }}
           VERSION: ${{ steps.ver.outputs.version }}
           STUDIO_REF: ${{ steps.studio.outputs.ref }}
+          SECURITY_UPDATES_EPOCH: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           {
             echo "args<<__EOF__"
+            echo "SECURITY_UPDATES_EPOCH=${SECURITY_UPDATES_EPOCH}"
             if [[ "${PLATFORM_ARGS}" == "true" ]]; then
               echo "SOURCE=pypi"
               echo "VERSION=${VERSION}"

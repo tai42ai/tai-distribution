@@ -217,6 +217,7 @@ jobs:
             STUDIO_REF=${{ steps.studio.outputs.ref }}
             PYPI_PROPAGATION_ATTEMPTS=${{ env.PYPI_PROPAGATION_ATTEMPTS }}
             PYPI_PROPAGATION_SLEEP=${{ env.PYPI_PROPAGATION_SLEEP }}
+            SECURITY_UPDATES_EPOCH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       # Fail on FIXABLE critical/high only (--ignore-unfixed): unfixed base-image

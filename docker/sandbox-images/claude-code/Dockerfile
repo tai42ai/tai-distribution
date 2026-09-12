@@ -15,8 +15,14 @@ LABEL org.opencontainers.image.title="tai-sandbox-claude-code" \
 
 # The slim tag lags the debian security repo (the release trivy gate fails on
 # fixable CRITICAL/HIGH CVEs); apply the security updates the tag has not
-# absorbed yet — the same posture as the platform image.
-RUN apt-get update \
+# absorbed yet — the same posture as the platform image. SECURITY_UPDATES_EPOCH
+# changes on every build so this layer is never served from the layer cache: a
+# reused layer would skip uploads published after it was built, scanning and
+# shipping a package version behind a published Debian fix. Referencing the arg
+# in the RUN is what invalidates its cache.
+ARG SECURITY_UPDATES_EPOCH
+RUN echo "security-updates epoch: ${SECURITY_UPDATES_EPOCH}" \
+ && apt-get update \
  && apt-get upgrade -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
