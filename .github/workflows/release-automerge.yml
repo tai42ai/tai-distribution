@@ -1,8 +1,9 @@
 # Release PRs merge themselves the moment branch protection's required checks
-# pass — the release train has no human step. The PAT (not GITHUB_TOKEN) must
-# both enable auto-merge and author the merge commit: refs written by
-# GITHUB_TOKEN fire no workflows, so a GITHUB_TOKEN merge would strand the
-# train before its tag ever published.
+# pass — the release train has no human step. A train someone converted to a
+# draft re-arms when it is readied again, so a hold never strands the release.
+# The PAT (not GITHUB_TOKEN) must both enable auto-merge and author the merge
+# commit: refs written by GITHUB_TOKEN fire no workflows, so a GITHUB_TOKEN
+# merge would strand the train before its tag ever published.
 # Strict branch protection marks an armed bot PR out-of-date on every push to
 # main, and nothing else refreshes those branches (release-please only on
 # releasable commits; refresh-pins/refresh-studio-ref only on their dispatch),
@@ -11,7 +12,7 @@ name: release-automerge
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
