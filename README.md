@@ -280,6 +280,8 @@ compose/langfuse/      standalone Langfuse stack (optional monitoring)
 .github/workflows/     release + CI
 ```
 
+The Compose bundle needs Docker Compose 2.20 or newer — the first release with the `required: false` dependency field the stack uses.
+
 Compose quickstart: in `compose/`, copy `.env.example` to `.env` and fill the
 required values (the stack refuses to start while any required secret is
 unset); create the config dir — `mkdir -p config && cp manifest.example.yml

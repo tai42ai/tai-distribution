@@ -242,6 +242,9 @@ services:
         condition: service_healthy
       db-migrate:
         condition: service_completed_successfully
+      sandbox-engine:
+        condition: service_healthy
+        required: false
     # Explicit per-service healthcheck (probes serve's own :8000/health via the
     # Python stdlib — the image ships no curl/wget). Generous start_period:
     # boot does manifest-driven dynamic imports with variable startup time, and a
@@ -301,6 +304,9 @@ services:
         condition: service_healthy
       db-migrate:
         condition: service_completed_successfully
+      sandbox-engine:
+        condition: service_healthy
+        required: false
     # The worker has no HTTP listener, so the baked serve probe (:8000/health)
     # would leave it permanently unhealthy. Probe the bus redis instead — the
     # worker is useless without it, and it is present under every backend leg.
@@ -663,9 +669,12 @@ services:
     # generated into /certs/client AND the inner-bridge egress firewall has
     # installed its full ruleset (the ready marker the installer writes last).
     # Gating readiness on the marker keeps a session from being created against a
-    # half-built chain: `--wait` and `depends_on ... service_healthy` cannot see a
-    # healthy engine until the own-subnet ACCEPTs and the private-range DROPs are
-    # both in place. Generous start_period covers first-boot cert generation.
+    # half-built chain: the session-creating services serve and backend gate their
+    # start on this healthcheck via an optional `depends_on: sandbox-engine`
+    # (condition: service_healthy, required: false — dropped in the base profile
+    # that has no engine), and `--wait` gates likewise, so neither sees a healthy
+    # engine until the own-subnet ACCEPTs and the private-range DROPs are both in
+    # place. Generous start_period covers first-boot cert generation.
     healthcheck:
       test:
         - "CMD-SHELL"
