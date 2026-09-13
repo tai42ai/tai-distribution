@@ -214,7 +214,16 @@ services:
     # transport is refused at boot unless --stateless-http is set. Bind 0.0.0.0
     # so the published port is reachable from outside the container.
     command: ["serve", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--stateless-http"]
-    environment: *tai-app-env
+    # The engine installs its inner-bridge egress firewall a moment AFTER the
+    # daemon starts answering, so the sandbox-docker provider proves that firewall
+    # is in force before the first session after any engine (re)connect and refuses
+    # the session if it cannot. Enabled on the session-creating services (serve,
+    # backend) only — not in the shared x-tai-app-env anchor, since it is a
+    # provider behaviour flag, not a recycle-pinned deployment value. Has no effect unless a
+    # docker sandbox provider is active (SANDBOX_DOCKER_HOST set).
+    environment:
+      <<: *tai-app-env
+      SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
     volumes:
       - ./config:/app
       - tai-prometheus:/home/tai
@@ -274,7 +283,16 @@ services:
     mem_limit: 1024m
     cpus: 1.5
     command: ["backend", "worker"]
-    environment: *tai-app-env
+    # The engine installs its inner-bridge egress firewall a moment AFTER the
+    # daemon starts answering, so the sandbox-docker provider proves that firewall
+    # is in force before the first session after any engine (re)connect and refuses
+    # the session if it cannot. Enabled on the session-creating services (serve,
+    # backend) only — not in the shared x-tai-app-env anchor, since it is a
+    # provider behaviour flag, not a recycle-pinned deployment value. Has no effect unless a
+    # docker sandbox provider is active (SANDBOX_DOCKER_HOST set).
+    environment:
+      <<: *tai-app-env
+      SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
     volumes:
       - ./config:/app
       # Own multiproc volume (NOT the shared tai-prometheus): the backend worker
