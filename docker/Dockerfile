@@ -264,8 +264,11 @@ COPY --from=venv   /opt/tai/venv        /opt/tai/venv
 COPY --from=studio /studio/apps/studio/dist /opt/tai/studio-dist
 
 # /app is the config dir (.env + manifest.yml) and WORKDIR; owned by tai so a
-# writable bind mount / volume works under the non-root user.
-RUN install -d -o tai -g tai /app
+# writable bind mount / volume works under the non-root user. /app/templates is
+# the local storage provider's root (STORAGE_LOCAL_ROOT_PATH defaults to
+# ./templates under WORKDIR); created tai-owned so a fresh named volume mounted
+# there inherits that ownership and the non-root process can write.
+RUN install -d -o tai -g tai /app /app/templates
 WORKDIR /app
 # Numeric uid:gid so runtimes can verify non-root without resolving the name.
 USER 1000:1000

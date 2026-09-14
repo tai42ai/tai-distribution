@@ -20,6 +20,16 @@
 # TAI_BUS_REDIS_URL on serve and backend, so the boot rules are satisfied.
 backend_module: !ENV ${TAI_BACKEND_MODULE:tai42_backend_arq}
 
+# --- Storage ----------------------------------------------------------------
+# The local-disk provider baked into the minimal image. A manifest that names no
+# storage_module registers NO storage provider (stored files are then
+# unavailable), so the slot is set here. The provider writes under
+# STORAGE_LOCAL_ROOT_PATH (./templates under the app's working directory /app),
+# which the compose backs with the tai-storage-local-data named volume. Switch to
+# `tai42_storage_s3` (with `--profile minio`) only after adding that plugin to
+# the image.
+storage_module: tai42_storage_local
+
 # --- HTTP routers -----------------------------------------------------------
 # The full core API router set + the Studio SPA catch-all are mounted by DEFAULT
 # (`default_routers: all`), so no router list is needed for a full Studio-serving

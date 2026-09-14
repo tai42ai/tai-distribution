@@ -37,14 +37,15 @@ $ docker compose up -d
 
 ## Where to store data
 
-Two mounts a real deployment must keep across container recreation, each located by an env var the server reads:
+Three mounts a real deployment must keep across container recreation, each located by an env var the server reads:
 
 | Mount | Env var | Holds |
 | --- | --- | --- |
 | Config directory | `TAI_MANIFEST_PATH` (in `TAI_CONFIG_DIR_PATH`) | the manifest — the registration of every runtime-installed plugin |
 | Plugin prefix | `TAI_PLUGINS_PREFIX` | the installed plugin code |
+| Local storage root | `STORAGE_LOCAL_ROOT_PATH` (`./templates` under `/app`) | the files the baked local storage provider keeps |
 
-Persist both, or a recreated container boots with the code and its registration out of sync. The bundled Postgres and Redis keep their own named data volumes.
+Persist all three, or a recreated container boots with the code and its registration out of sync and loses its stored files. The bundled Postgres and Redis keep their own named data volumes.
 
 ## Adding plugins
 
