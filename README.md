@@ -49,6 +49,31 @@ there. `TAI_CONFIG_DIR_PATH` moves the dir; `TAI_MANIFEST_PATH` moves the
 manifest file alone. The serve port defaults to `8000` (`--port`, or the
 `APP_ARGS_PORT` env var); the image `HEALTHCHECK` probes `:8000/health`.
 
+### First run
+
+Turn the auth gate on (`ACCESS_CONTROL_ENABLE=true` in `.env`) and name an
+identity provider in your `manifest.yml` (see [Config](#config) and the
+commented block in `manifest.example.yml`), then initialize the deployment once
+to create the owner and mint the owner's first key:
+
+```sh
+cd compose
+docker compose exec serve tai setup
+```
+
+`tai setup` drives the public `POST /api/setup` door: it creates the owner
+principal and prints the owner's key **once** — copy it then, it is not shown
+again. Gate the door with a token: set `TAI_SETUP_TOKEN` in `.env` to pin your
+own, or leave it unset and the server mints a one-time token and logs it once at
+startup (read it from the `serve` log). Setup is one-shot — once the owner
+principal exists the door answers `409` and mints nothing more, and every later
+key is minted by the owner.
+
+If the identity store is ever lost with no backup export, re-mint one surviving
+owner key on the deployment host with `docker compose exec serve tai setup
+--recover`; the [backup and restore
+guide](https://tai42.ai/operate/backup-and-restore) carries the detail.
+
 ### Adding plugins
 
 The image is the minimal core. Add the plugins a deployment needs one of two

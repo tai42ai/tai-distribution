@@ -45,7 +45,8 @@ default_routers: all
 # The skeleton ships no concrete identity provider; a deployment with the auth
 # gate on MUST name one. The default redis-backed api-key provider registers
 # itself as the "redis" provider at import. With the example .env's
-# ACCESS_CONTROL_ENABLE=false this stays off; uncomment when you enable the gate.
+# ACCESS_CONTROL_ENABLE=false this stays off; uncomment when you enable the gate,
+# then run `tai setup` once to create the owner and the first key.
 # lifecycle_modules:
 #   - tai42_identity_redis.redis_api_key_provider
 
