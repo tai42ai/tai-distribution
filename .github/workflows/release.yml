@@ -13,6 +13,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Contract-range agreement gate, ahead of every build leg: the pinned
+  # tai42-contract version in docker/pypi-requirements.txt must lie inside the
+  # contract range the pinned studio commit (docker/STUDIO_REF) declares, else the
+  # served SPA speaks a contract the running platform does not. A red here starts
+  # no build, so nothing is scanned, pushed, signed or released while the two
+  # sides disagree.
+  alignment:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Pinned contract version is inside the studio's declared range
+        env:
+          STUDIO_REPO_URL: https://github.com/${{ github.repository_owner }}/tai-studio.git
+        run: uv run --python 3.13 --with packaging python scripts/check_image_alignment.py --studio-repo "$STUDIO_REPO_URL"
+
   # Per-arch build on native runners (NOT QEMU), fanned out over the image list:
   # the platform image plus the two pinned session images. Each leg builds its
   # image, scans it, and — only if the scan passes — pushes it to GHCR BY DIGEST
@@ -24,6 +42,7 @@ jobs:
   # they build from their own context with NO SOURCE/STUDIO_REF build-args; only
   # the platform image carries them.
   build:
+    needs: alignment
     strategy:
       fail-fast: false
       matrix:

@@ -330,3 +330,17 @@ jobs:
             fi
           done
           python compose/tests/parity_app_env.py
+
+  # Unit-test the release alignment gate (scripts/check_image_alignment.py) on
+  # every PR so a regression in the gate is caught before it runs on a tag. The
+  # script needs `packaging`; uv supplies the pinned interpreter, pytest and
+  # packaging.
+  alignment-script-tests:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: pytest the alignment gate script
+        run: uv run --python 3.13 --with pytest --with packaging pytest scripts -q

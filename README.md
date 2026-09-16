@@ -278,6 +278,17 @@ docker buildx build -f docker/Dockerfile \
   --load -t docker.io/tai42/tai:latest .
 ```
 
+The release build runs only when the pinned `tai42-contract` version lies inside
+the contract range the pinned tai-studio commit declares.
+`scripts/check_image_alignment.py` gates the release workflow on it: it reads the
+`tai42-contract` pin from `docker/pypi-requirements.txt` and the supported
+contract range the studio commit in `docker/STUDIO_REF` declares (its
+`_SPEC["contract"]` marketplace-registry entry), and fails the release loudly —
+naming the version, the range and the commit, no image published — when the pin
+falls outside the range. When a platform release or a studio release moves one
+side first, the pins and the ref still land on `main`; the image is cut by the
+release that brings the two into range.
+
 To build and run the whole stack from source, layer the
 `docker-compose.local.yml` override on the base compose — it adds the same
 `SOURCE=local` build to every app service, so `up --build` builds the image from
