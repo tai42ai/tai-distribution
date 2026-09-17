@@ -233,24 +233,34 @@ jobs:
           severity: CRITICAL,HIGH
           vuln-type: os,library
 
-  # Stable required status for branch protection: always runs and stays green when
-  # the smoke image build passed or was skipped (a version-only bump, or the reuse
-  # dedup); it fails only when build-image failed or was cancelled.
+  # Stable required status for branch protection covering the whole image path. It
+  # runs on every event and passes only when every upstream job of the image path —
+  # changes, reuse, resolve-manifest, build-image — succeeded or was legitimately
+  # skipped by a version-only bump or the reuse dedup. A failed or cancelled upstream
+  # job — including a resolve-manifest that fails while a package index lags a fresh
+  # publish — reds this check so branch protection holds the merge.
   build-smoke:
-    needs: [changes, build-image]
+    needs: [changes, reuse, resolve-manifest, build-image]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Smoke image build passed or was skipped
+      - name: Image path upstream jobs succeeded or were skipped
         env:
-          RESULT: ${{ needs.build-image.result }}
+          CHANGES: ${{ needs.changes.result }}
+          REUSE: ${{ needs.reuse.result }}
+          RESOLVE: ${{ needs.resolve-manifest.result }}
+          BUILD: ${{ needs.build-image.result }}
         run: |
           set -euo pipefail
-          echo "build-image result: ${RESULT}"
-          case "${RESULT}" in
-            success|skipped) ;;
-            *) echo "::error::build-image ${RESULT}"; exit 1 ;;
-          esac
+          for entry in "changes=${CHANGES}" "reuse=${REUSE}" "resolve-manifest=${RESOLVE}" "build-image=${BUILD}"; do
+            job="${entry%%=*}"
+            result="${entry#*=}"
+            echo "${job} result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) echo "::error::${job} ${result}"; exit 1 ;;
+            esac
+          done
 
   # Validate every compose file and every profile it declares. Defensive glob:
   # `compose/**/docker-compose.yml` matches every compose file present, and
