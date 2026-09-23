@@ -242,6 +242,103 @@ jobs:
           import tai42_toolbox.tools.request
           print("request tool module imports")
           '
+      # The image sets PIP_CONSTRAINT/UV_CONSTRAINT to a constraints file of its
+      # own core versions, so a plugin that needs a different core major is
+      # refused loudly by the resolver instead of silently downgrading the core.
+      # The direct-into-venv install doors are all root: a derived image installs
+      # under `USER root` (README) and an interactive `pip3 install` in a running
+      # container also runs as root — the venv is root-owned, so a non-root
+      # process cannot write it at all. The probes run
+      # as root (`-u 0`) to exercise exactly that door and prove the env
+      # constraint holds even for root. A plugin pinned to the PREVIOUS core
+      # majors (contract<14 / kit<6) must be refused, and the image's own core
+      # must stay at its pins — durable because the image never returns below
+      # contract 14. Each probe is a fresh `docker run --rm` against the built
+      # image, the pattern the toolbox import step uses.
+      - name: Core-pins constraint refuses an incompatible plugin, core unchanged
+        run: |
+          set -euo pipefail
+          if docker run --rm -u 0 --entrypoint python ${{ env.IMAGE_REF }} \
+              -m pip install 'tai42-monitoring-langfuse==3.0.3' > refuse.log 2>&1; then
+            echo "::error::an incompatible plugin installed instead of being refused"
+            cat refuse.log
+            exit 1
+          fi
+          grep -q 'ResolutionImpossible' refuse.log || {
+            echo "::error::the install failed for a reason other than the constraint conflict"
+            cat refuse.log
+            exit 1
+          }
+          grep -q 'The user requested (constraint) tai42-' refuse.log || {
+            echo "::error::the refusal did not cite the image's core constraint"
+            cat refuse.log
+            exit 1
+          }
+          echo "incompatible plugin refused by the resolver constraint"
+          docker run --rm --entrypoint python ${{ env.IMAGE_REF }} -m pip check
+          docker run --rm --entrypoint python ${{ env.IMAGE_REF }} -c '
+          import importlib.metadata as m
+          print("contract", m.version("tai42-contract"))
+          print("kit", m.version("tai42-kit"))
+          '
+      # A plugin whose pins match the image's core majors (contract>=14,<15 /
+      # kit>=6,<7) installs cleanly under the constraint — again as root, the
+      # derived-image/operator door into the root-owned venv. Wrapped in the PyPI
+      # propagation retry so a still-propagating publish self-heals instead of
+      # flaking; a genuinely unsatisfiable install still reds within the window.
+      - name: Core-pins constraint admits a compatible plugin
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
+            if docker run --rm -u 0 --entrypoint python ${{ env.IMAGE_REF }} \
+                -m pip install 'tai42-monitoring-langfuse==3.0.4'; then
+              echo "compatible plugin installed under the constraint"
+              exit 0
+            fi
+            echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+            if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
+              sleep "${PYPI_PROPAGATION_SLEEP}"
+            fi
+          done
+          echo "::error::a compatible plugin did not install under the constraint after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
+          exit 1
+      # The marketplace installer runs as the default non-root worker user and
+      # `pip install --prefix <prefix>` into a writable prefix; --prefix resolves
+      # against the running env, so the core is "already satisfied" and never
+      # duplicated into the prefix. Prove the env constraint leaves that path
+      # working. Same propagation retry as the plain install.
+      - name: Core-pins constraint keeps the marketplace prefix install working
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
+            if docker run --rm --entrypoint python ${{ env.IMAGE_REF }} \
+                -m pip install --prefix /tmp/probe-prefix 'tai42-monitoring-langfuse==3.0.4' > prefix.log 2>&1; then
+              cat prefix.log
+              grep -q 'Requirement already satisfied: tai42-contract' prefix.log || {
+                echo "::error::the prefix install re-resolved the core instead of reusing it"
+                exit 1
+              }
+              echo "marketplace prefix install succeeded, core already satisfied"
+              exit 0
+            fi
+            cat prefix.log
+            echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+            if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
+              sleep "${PYPI_PROPAGATION_SLEEP}"
+            fi
+          done
+          echo "::error::the marketplace prefix install did not succeed under the constraint after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
+          exit 1
+      # The shipped constraints file is derived from the venv at build; assert it
+      # equals the release manifest's extras-stripped pins so a drift between what
+      # the image holds and docker/pypi-requirements.txt reds here.
+      - name: Shipped constraints file equals the manifest pins
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint cat ${{ env.IMAGE_REF }} /opt/tai/constraints.txt > shipped-constraints.txt
+          python3 scripts/derive_constraints.py --manifest docker/pypi-requirements.txt > manifest-constraints.txt
+          diff -u manifest-constraints.txt shipped-constraints.txt
+          echo "shipped /opt/tai/constraints.txt equals the manifest pins"
       # Fail on FIXABLE critical/high only (--ignore-unfixed): unfixed base-image
       # CVEs must not block a PR forever. Trivy auto-reads the checked-in
       # .trivyignore from the repo root, so justified exceptions are respected.
