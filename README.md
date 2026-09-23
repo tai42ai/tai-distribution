@@ -106,7 +106,7 @@ FROM docker.io/tai42/tai:latest
 # looks). The base image sets PIP_CONSTRAINT/UV_CONSTRAINT to its own
 # contract/kit/skeleton/cli versions, so this install is held to them: an
 # incompatible plugin is refused loudly by the resolver, never installed by
-# downgrading the core.
+# downgrading or upgrading the core.
 USER root
 RUN python -m pip install tai42-channel-slack tai42-storage-s3
 USER tai
@@ -116,7 +116,7 @@ The base image sets `PIP_CONSTRAINT`/`UV_CONSTRAINT` to a constraints file of it
 own core versions, so any `python -m pip install` — here, or run by hand in a
 container — that would move `tai42-contract`, `tai42-kit`, `tai42-skeleton`,
 `tai42-cli`, or any other package the image ships off the image's version is
-refused by the resolver rather than silently downgrading the core and breaking
+refused by the resolver rather than silently downgrading or upgrading the core and breaking
 the server. After a manual or derived-image install, run `python -m pip check`
 to confirm the environment is consistent.
 
