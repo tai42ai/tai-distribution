@@ -103,11 +103,22 @@ FROM docker.io/tai42/tai:latest
 # install, then drop back to the non-root runtime user. Use `python -m pip`
 # (the venv interpreter is first on PATH; a bare `pip` would be the base
 # image's system pip and install outside the venv, where the server never
-# looks).
+# looks). The base image sets PIP_CONSTRAINT/UV_CONSTRAINT to its own
+# contract/kit/skeleton/cli versions, so this install is held to them: an
+# incompatible plugin is refused loudly by the resolver, never installed by
+# downgrading the core.
 USER root
 RUN python -m pip install tai42-channel-slack tai42-storage-s3
 USER tai
 ```
+
+The base image sets `PIP_CONSTRAINT`/`UV_CONSTRAINT` to a constraints file of its
+own core versions, so any `python -m pip install` — here, or run by hand in a
+container — that would move `tai42-contract`, `tai42-kit`, `tai42-skeleton`,
+`tai42-cli`, or any other package the image ships off the image's version is
+refused by the resolver rather than silently downgrading the core and breaking
+the server. After a manual or derived-image install, run `python -m pip check`
+to confirm the environment is consistent.
 
 Then reference the added plugins from your `manifest.yml`.
 

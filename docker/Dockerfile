@@ -263,6 +263,20 @@ ENV LLM_PROVIDER_CHECKPOINT_TTL_MINUTES=43200
 COPY --from=venv   /opt/tai/venv        /opt/tai/venv
 COPY --from=studio /studio/apps/studio/dist /opt/tai/studio-dist
 
+# Ship the venv's own first-party core versions as a pip/uv constraints file and
+# hold every pip/uv-pip install into the venv to them: an install that would
+# move a core package off the image's version is refused loudly by the resolver
+# instead of silently downgrading the core. The file is derived from the venv
+# itself (the tai42-* distributions just copied in), so it equals the installed
+# versions by construction; it is root-owned and world-readable, and the env
+# vars — not a file permission — are what every shell, the entrypoint process,
+# and a derived image's build inherit, so even a root pip honours it.
+RUN --mount=type=bind,source=scripts/derive_constraints.py,target=/tmp/derive_constraints.py \
+    python /tmp/derive_constraints.py > /opt/tai/constraints.txt \
+ && chmod 0644 /opt/tai/constraints.txt
+ENV PIP_CONSTRAINT=/opt/tai/constraints.txt \
+    UV_CONSTRAINT=/opt/tai/constraints.txt
+
 # /app is the config dir (.env + manifest.yml) and WORKDIR; owned by tai so a
 # writable bind mount / volume works under the non-root user. /app/templates is
 # the local storage provider's root (STORAGE_LOCAL_ROOT_PATH defaults to
