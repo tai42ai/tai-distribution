@@ -147,7 +147,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --no-sources \
       /src/contract \
       /src/kit \
-      /src/toolbox \
+      "/src/toolbox[http]" \
       /src/cli \
       "/src/skeleton[toolbox,files]" \
       /src/agents \
