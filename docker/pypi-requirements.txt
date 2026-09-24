@@ -27,7 +27,7 @@ tai42-kit==7.0.2
 tai42-toolbox[http]==4.0.2
 tai42-cli==11.0.2
 tai42-skeleton[toolbox,files]==20.0.0
-tai42-agents==8.0.1
+tai42-agents==8.0.2
 tai42-storage-local==1.1.15
 tai42-backend-arq==4.0.2
 tai42-identity-redis==2.0.5
