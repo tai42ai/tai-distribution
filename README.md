@@ -239,7 +239,7 @@ TAI_VERSION=X.Y.Z docker compose up -d
 # 2. Move every marketplace-installed plugin to its newest compatible version.
 docker compose exec serve tai plugins upgrade --all
 
-# 3. Verify: every row's compat verdict, and anything still quarantined.
+# 3. Verify: every row's compat verdict and update availability.
 docker compose exec serve tai plugins installed
 ```
 
@@ -254,11 +254,13 @@ ephemeral venv) is lost with the old container.
 **Why step 2 exists.** What carries over was installed against the OLD
 release's core, and the new release may ship a newer `tai42-contract`. A
 carried-over plugin whose declared contract range excludes the running contract
-cannot be loaded — and boot does not crash on it: the server **quarantines**
-it, starting up without it, serving everything else, and naming the plugin and
-the reason loudly in the startup log and in the installed listing.
-`tai plugins upgrade --all` then moves every installed plugin onto its newest
-version compatible with the running core, re-patching the manifest and
+cannot load, and because the manifest names it the new container **refuses to
+boot**: the process exits naming the module, its kind and the reason, rather
+than coming up without a plugin the manifest asked for. Fix or update the
+plugin, point the manifest at a working one, or remove it from the manifest,
+then boot again. `tai plugins upgrade --all` keeps the installed set current so
+this does not arise: it moves every installed plugin onto its newest version
+compatible with the running core, re-patching the manifest and
 reloading as it goes, and reports one outcome per plugin (`upgraded` /
 `up-to-date` / `no-compatible-version` / `failed`). Each such reload is
 broadcast fleet-wide on the worker bus, so every running container re-imports
@@ -270,8 +272,8 @@ exception is **router** and **middleware** plugins: their handlers and middlewar
 stack are frozen into the ASGI app when the process builds, so a router or
 middleware plugin — net-new or an upgrade of an already-listed one — takes effect
 only when each pod/container restarts. Step 3's
-`tai plugins installed` confirms the result: each row's compat verdict, update
-availability, and any plugin still quarantined.
+`tai plugins installed` confirms the result: each row's compat verdict and
+update availability.
 
 ## Building locally
 
