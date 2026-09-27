@@ -24,7 +24,7 @@
 # ships one roster regardless of SOURCE.
 tai42-contract==15.2.0
 tai42-kit==7.2.0
-tai42-toolbox[http]==4.2.1
+tai42-toolbox[http,classifier]==4.2.1
 tai42-cli==12.2.0
 tai42-skeleton[toolbox,files]==21.2.2
 tai42-agents==8.1.2

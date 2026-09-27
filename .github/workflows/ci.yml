@@ -226,22 +226,25 @@ jobs:
             SECURITY_UPDATES_EPOCH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # The image ships the toolbox `request` tool ready to run, so its module
-      # must import on the built image — the curl client behind the `http` extra
-      # raises a loud ImportError at module load when the extra is absent. A tool
-      # module registers through `tai42_app` at import, so a no-op app is bound
-      # first (the precondition for importing any tool module standalone); the
-      # import then fails the job on any ImportError, so the image can never ship
-      # a manifest-declared tool that cannot import. The image's entrypoint is the
-      # `tai` CLI, so the interpreter is named as the entrypoint explicitly.
-      - name: Toolbox request tool imports on the image
+      # The image ships the toolbox `request` and `classify` tools ready to run,
+      # so their modules must import on the built image — each raises a loud
+      # ImportError at module load when its extra is absent: the curl client
+      # behind the `http` extra, and the kit llm stack behind the `classifier`
+      # extra. A tool module registers through `tai42_app` at import, so a no-op
+      # app is bound first (the precondition for importing any tool module
+      # standalone); the import then fails the job on any ImportError, so the
+      # image can never ship a manifest-declared tool that cannot import. The
+      # image's entrypoint is the `tai` CLI, so the interpreter is named as the
+      # entrypoint explicitly.
+      - name: Toolbox request and classify tools import on the image
         run: |
           docker run --rm --entrypoint python ${{ env.IMAGE_REF }} -c '
           import types
           from tai42_contract.app import tai42_app
           tai42_app.bind(types.SimpleNamespace(tools=types.SimpleNamespace(tool=lambda *a, **k: (lambda f: f))))
           import tai42_toolbox.tools.request
-          print("request tool module imports")
+          import tai42_toolbox.tools.classify
+          print("request and classify tool modules import")
           '
       # The two constraint probes install a real marketplace plugin at versions
       # that move with every core major bump: the newest release the image's
