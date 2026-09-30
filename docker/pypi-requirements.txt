@@ -23,10 +23,10 @@
 # stay identical to the venv-local install set in docker/Dockerfile — the image
 # ships one roster regardless of SOURCE.
 tai42-contract==15.3.0
-tai42-kit==7.3.1
+tai42-kit==7.4.0
 tai42-toolbox[http,classifier]==4.2.2
 tai42-cli==12.3.1
-tai42-skeleton[toolbox,files]==21.3.2
+tai42-skeleton[toolbox,files]==21.4.0
 tai42-agents==8.2.1
 tai42-storage-local==1.2.3
 tai42-backend-arq==4.2.1
