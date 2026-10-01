@@ -358,8 +358,9 @@ jobs:
           diff -u manifest-constraints.txt shipped-constraints.txt
           echo "shipped /opt/tai/constraints.txt equals the manifest pins"
       # Fail on FIXABLE critical/high only (--ignore-unfixed): unfixed base-image
-      # CVEs must not block a PR forever. Trivy auto-reads the checked-in
-      # .trivyignore from the repo root, so justified exceptions are respected.
+      # CVEs must not block a PR forever. The checked-in .trivyignore.yaml carries
+      # the justified, scoped exceptions (passed via trivyignores because the YAML
+      # ignorefile is not auto-read).
       - name: Trivy scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -369,6 +370,7 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
           vuln-type: os,library
+          trivyignores: .trivyignore.yaml
 
   # Stable required status for branch protection covering the whole image path. It
   # runs on every event and passes only when every upstream job of the image path —

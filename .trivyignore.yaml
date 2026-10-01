@@ -1,0 +1,44 @@
+# Accepted vulnerabilities, scoped to pip's vendored dependency copies.
+#
+# pip ships its own copies of several libraries under pip/_vendor (recorded in
+# pip/_vendor/vendor.txt). Those copies serve pip's own internals during package
+# installs; they are not the versions application code imports. The image's own
+# top-level copies of these libraries are current and stay gated by this scan.
+# Each entry is pinned to the exact affected version so any other version and
+# every other advisory still fail the gate. Re-check when the image's pip version
+# moves.
+#
+# The urllib3 entries carry an expiry: pip 26.2.1 (the latest release) vendors
+# urllib3 2.7.0, and no pip release yet vendors the fixed 2.8.0, so this cannot be
+# resolved by a version bump; the expiry forces the scan to refuse it again if a
+# fixed pip has not shipped by then.
+vulnerabilities:
+  # pip's vendored msgpack (pip vendors 1.1.2); the image's own msgpack is >= 1.2.1.
+  - id: GHSA-6v7p-g79w-8964
+    purls:
+      - pkg:pypi/msgpack@1.1.2
+    statement: >-
+      Accepted only for pip's vendored msgpack under pip/_vendor. The image's own
+      msgpack is >= 1.2.1.
+  # pip's vendored setuptools/pkg_resources (70.3.0); the image's own setuptools is >= 78.1.1.
+  - id: CVE-2025-47273
+    purls:
+      - pkg:pypi/setuptools@70.3.0
+    statement: >-
+      Accepted only for pip's vendored setuptools under pip/_vendor. The image's
+      own setuptools is >= 78.1.1.
+  # pip's vendored urllib3 (pip 26.2.1 vendors 2.7.0); the image's own urllib3 is 2.8.0.
+  - id: CVE-2026-97687
+    purls:
+      - pkg:pypi/urllib3@2.7.0
+    expired_at: 2026-11-15
+    statement: >-
+      Accepted only for pip's vendored urllib3 under pip/_vendor; no pip release
+      vendors the fix yet. The image's own urllib3 is 2.8.0.
+  - id: CVE-2026-97689
+    purls:
+      - pkg:pypi/urllib3@2.7.0
+    expired_at: 2026-11-15
+    statement: >-
+      Accepted only for pip's vendored urllib3 under pip/_vendor; no pip release
+      vendors the fix yet. The image's own urllib3 is 2.8.0.

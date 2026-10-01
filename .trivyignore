@@ -1,6 +1,0 @@
-# pip-vendored copies inside pip/_vendor (msgpack 1.1.2, pkg_resources/setuptools
-# 70.3.0). pip 26.x is current and no release re-vendors the fixed versions; the
-# vendored code serves only pip's own internals and is unreachable from app code.
-# Re-check whenever the image's pip version moves.
-GHSA-6v7p-g79w-8964
-CVE-2025-47273
