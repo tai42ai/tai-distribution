@@ -5,7 +5,8 @@
 # stay invisible until an unrelated rebuild. This job pulls the live `latest`
 # tag on a daily schedule and re-runs trivy with the SAME gate policy as the
 # build-time scans (fixable CRITICAL/HIGH, honouring the checked-in
-# .trivyignore), so a newly disclosed vulnerability surfaces as a failed run.
+# .trivyignore.yaml exception set), so a newly disclosed vulnerability surfaces
+# as a failed run.
 #
 # A red here means the published image needs a rebuild against a patched base;
 # it blocks no PR (this workflow has no push / PR trigger).
@@ -37,7 +38,7 @@ jobs:
           - ghcr.io/tai42ai/tai-sandbox-claude-code:latest
           - ghcr.io/tai42ai/tai-sandbox-exec:latest
     steps:
-      # Checkout so trivy auto-reads the repo-root .trivyignore, matching the
+      # Checkout so the scan reads the repo-root .trivyignore.yaml, matching the
       # build-time scans' exception set.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Log in to GHCR
@@ -47,7 +48,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # Same policy as ci.yml / release.yml: fail on FIXABLE critical/high
-      # (--ignore-unfixed), os + library, honouring the checked-in .trivyignore.
+      # (--ignore-unfixed), os + library, honouring the checked-in
+      # .trivyignore.yaml exception set (passed via trivyignores because the YAML
+      # ignorefile is not auto-read).
       - name: Trivy scan (published latest image)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -57,3 +60,4 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
           vuln-type: os,library
+          trivyignores: .trivyignore.yaml

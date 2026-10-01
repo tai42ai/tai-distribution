@@ -129,8 +129,9 @@ jobs:
           build-args: ${{ steps.bargs.outputs.args }}
           cache-from: type=gha,scope=${{ matrix.image.key }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.key }}-${{ matrix.arch }}
-      # Gate: fail on FIXABLE critical/high (--ignore-unfixed). Trivy auto-reads
-      # the checked-in .trivyignore from the repo root.
+      # Gate: fail on FIXABLE critical/high (--ignore-unfixed). The checked-in
+      # .trivyignore.yaml carries the scoped exceptions (passed via trivyignores
+      # because the YAML ignorefile is not auto-read).
       - name: Trivy scan (gate before push)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -140,6 +141,7 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
           vuln-type: os,library
+          trivyignores: .trivyignore.yaml
       - name: Build and push by digest to GHCR
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0

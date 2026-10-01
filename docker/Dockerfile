@@ -141,10 +141,14 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/identity-redis/  /src/identity-redis/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/sandbox-docker/  /src/sandbox-docker/
 COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --exclude=.env --exclude=**/.env --exclude=.env.* --exclude=**/.env.* --exclude=build --exclude=dist --exclude=**/*.egg-info tai42/plugins/sandbox-local/   /src/sandbox-local/
-# The msgpack/setuptools floors hold the transitive versions above the CVEs the
+# --refresh revalidates every package's index metadata against PyPI on each
+# build, so a third-party dependency resolves to the current latest (a security
+# fix included) instead of a snapshot cached from an earlier build; the cache
+# mount stays to save re-downloading wheels, not to serve stale metadata. The
+# msgpack/setuptools floors hold those transitive versions above the CVEs the
 # image vulnerability gate (HIGH, fixed-only) refuses; both venv flavors carry them.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --no-sources \
+    uv pip install --refresh --no-sources \
       /src/contract \
       /src/kit \
       "/src/toolbox[http,classifier]" \
@@ -182,25 +186,19 @@ ARG VERSION
 ARG PYPI_PROPAGATION_ATTEMPTS=10
 ARG PYPI_PROPAGATION_SLEEP=60
 COPY docker/pypi-requirements.txt /tmp/pypi-requirements.txt
-# --refresh-package the first-party tai42-* names so uv revalidates their simple
-# -index metadata against PyPI every attempt instead of trusting the cache mount
-# (a build seconds after a publish would otherwise reuse a stale index snapshot
-# that predates the new version). The cache mount stays: it still serves every
-# wheel and every already-fresh package, so only the first-party metadata is
-# re-fetched. Retry across the propagation window so a still-propagating publish
-# waits instead of failing the build; a genuinely unsatisfiable pin still reds.
-# Flags accumulate as positional parameters ("$@", always quoted) read straight
-# from the requirements file — no word-split of an unquoted string.
+# --refresh revalidates every package's simple-index metadata against PyPI on
+# each build — first-party and third-party alike — so the install never reuses a
+# cached index snapshot that predates a newly published version: a first-party
+# release pushed seconds earlier, or a third-party security fix. The cache mount
+# stays to save re-downloading wheels whose hashes still match, not to serve
+# stale metadata. Retry across the propagation window so a still-propagating
+# publish waits instead of failing the build; a genuinely unsatisfiable pin still
+# reds. Wheels only, with the sdist-only carve-out for the three pure-Python
+# transitive deps (jinja2schema, odfpy, crontab) that publish no wheel.
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -eu; \
-    set --; \
-    while IFS= read -r name; do \
-      case "$name" in \
-        tai42-*) set -- "$@" --refresh-package "${name%%[[=]*}" ;; \
-      esac; \
-    done < /tmp/pypi-requirements.txt; \
     for attempt in $(seq 1 "$PYPI_PROPAGATION_ATTEMPTS"); do \
-      if uv pip install "$@" --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
+      if uv pip install --refresh --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
           -r /tmp/pypi-requirements.txt \
           "msgpack>=1.2.1" \
           "setuptools>=78.1.1"; then \
