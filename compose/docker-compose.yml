@@ -53,6 +53,21 @@ x-tai-app-env: &tai-app-env
   # resolves the compose refusal list, never bare. Set here (not per service) so
   # every app process reports the same shape.
   TAI_SUPERVISED: compose
+  # The keys this deployment pins: every key of this anchor except the supervision
+  # pair itself. A container respawn re-injects them from this file, so the platform
+  # refuses a settings profile that changes one (edit this file and recreate instead).
+  # A JSON list; keep it in step with the anchor (compose/tests/parity_app_env.py).
+  TAI_SUPERVISED_PINNED_KEYS: >-
+    ["TAI_CONFIG_MODE", "TAI_CONFIG_DIR_PATH", "TAI_MANIFEST_PATH", "TAI_BACKEND_MODULE",
+    "ACCESS_CONTROL_ENABLE", "ACCESS_CONTROL_ALWAYS_PUBLIC_PATH_PREFIXES", "TAI_BUS_REDIS_URL",
+    "SUB_MCP_REDIS_URL", "ARQ_REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND",
+    "CELERY_REDBEAT_REDIS_URL", "TAI_TOOL_RUNS_REDIS_URL", "TAI_RATE_LIMIT_REDIS_URL",
+    "INTERACTIONS_REDIS_URL", "HOOKS_REDIS_URL", "ACCESS_CONTROL_REDIS_URL",
+    "CONNECTOR_STORE_REDIS_URL", "TAI_DEFAULT_REDIS_URL", "TAI_DATABASE_DEFAULT_PG_HOST",
+    "TAI_DATABASE_DEFAULT_PG_PORT", "TAI_DATABASE_DEFAULT_PG_DB", "TAI_DATABASE_DEFAULT_PG_USER",
+    "TAI_DATABASE_DEFAULT_PG_PASSWORD", "PROMETHEUS_MULTIPROC_DIR", "STORAGE_S3_ENDPOINT",
+    "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY", "STORAGE_S3_SECURE",
+    "STORAGE_S3_REGION", "SANDBOX_DOCKER_HOST", "SANDBOX_LOCAL_ROOT"]
   # --- config provider (file mode: reads /app/manifest.yml + /app/.env) -------
   TAI_CONFIG_MODE: file
   TAI_CONFIG_DIR_PATH: /app
