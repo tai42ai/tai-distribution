@@ -131,7 +131,7 @@ located by an env var the skeleton reads:
 |---|---|---|---|
 | Plugin prefix directory | `TAI_PLUGINS_PREFIX` | image venv (ephemeral) | Where marketplace installs land; on a persistent disk they survive container recreation. |
 | Manifest file | `TAI_MANIFEST_PATH` (or `TAI_CONFIG_DIR_PATH` for the whole config dir) | `/app/manifest.yml` | Marketplace installs patch the manifest; losing it drops every runtime-added plugin's registration. |
-| Local storage root | `STORAGE_LOCAL_ROOT_PATH` | `./templates` under `/app` | Where the baked local storage provider keeps stored files; the compose bundle mounts the `tai-storage-local-data` named volume there. |
+| Local storage root | `STORAGE_LOCAL_ROOT_PATH` | set by the image to `/app/templates` (required: the provider refuses every call while it is unset) | Where the baked local storage provider keeps stored files; the compose bundle mounts the `tai-storage-local-data` named volume there. |
 
 The prefix and the manifest work together: the prefix keeps the installed
 **code**, the manifest keeps its **registration**. Persist only one and a

@@ -227,8 +227,8 @@ services:
     volumes:
       - ./config:/app
       # Local storage provider data (the baked default storage): the provider
-      # writes under STORAGE_LOCAL_ROOT_PATH, ./templates relative to WORKDIR
-      # /app, so this named volume backs exactly that path — shared with backend
+      # writes under STORAGE_LOCAL_ROOT_PATH (the image sets /app/templates), so
+      # this named volume backs exactly that path — shared with backend
       # (both serve and the worker read and write stored files) and nested
       # inside the ./config bind mount so it survives a container recreation
       # independently of the config directory.
@@ -303,7 +303,7 @@ services:
     volumes:
       - ./config:/app
       # Local storage provider data — the same volume serve mounts at the
-      # provider's root (STORAGE_LOCAL_ROOT_PATH, ./templates under WORKDIR /app).
+      # provider's root (STORAGE_LOCAL_ROOT_PATH, set by the image to /app/templates).
       - tai-storage-local-data:/app/templates
       # Own multiproc volume (NOT the shared tai-prometheus): the backend worker
       # names its Prometheus files by PID in its own PID namespace and would
@@ -728,8 +728,8 @@ volumes:
   tai-postgres-data:
   tai-redis-data:
   # Local storage provider data: mounted into serve+backend at /app/templates,
-  # the provider's root (STORAGE_LOCAL_ROOT_PATH defaults to ./templates under
-  # WORKDIR /app), so stored files survive a container recreation.
+  # the provider's root (STORAGE_LOCAL_ROOT_PATH, set by the image to
+  # /app/templates), so stored files survive a container recreation.
   tai-storage-local-data:
   tai-prometheus:
   tai-prometheus-backend:
