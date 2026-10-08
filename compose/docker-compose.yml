@@ -27,6 +27,13 @@
 #                  wiring below is preset on serve/backend and idle under arq.
 #   agents-redis — a module-capable redis:8 (RediSearch + RedisJSON) on its own
 #                  service for the langgraph redis checkpoint/store agents leg.
+#   monitoring   — the OpenTelemetry collector serve and backend export their
+#                  monitoring records to (with `monitoring_module` set in the
+#                  manifest). It maps the records onto the backend's vocabulary
+#                  (otel-collector.yaml: Langfuse) and sends them; set
+#                  LANGFUSE_HOST and OTEL_COLLECTOR_LANGFUSE_AUTH in `.env`
+#                  (http://langfuse-web:3000 for the compose/langfuse/ stack,
+#                  reached over this stack's `monitoring` network).
 
 name: tai
 
@@ -224,6 +231,12 @@ services:
     environment:
       <<: *tai-app-env
       SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
+      # The monitoring writer's OpenTelemetry export: the collector of the
+      # `monitoring` profile, and the processor self-metrics its drop count reads.
+      # Unused unless the manifest names a monitoring_module.
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}"
+      OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED: "true"
+      OTEL_SERVICE_NAME: "${OTEL_SERVICE_NAME:-tai42}"
     volumes:
       - ./config:/app
       # Local storage provider data (the baked default storage): the provider
@@ -246,9 +259,11 @@ services:
       - tai-sandbox-local-data:${SANDBOX_LOCAL_ROOT:-/var/lib/tai-sandbox-local}
     # Default datastore network + the sandbox control path (§ sandbox-ctrl): serve
     # reaches the engine control API for the sync/conversation/SSE session doors.
+    # monitoring: the monitoring backend's reads (§ monitoring).
     networks:
       - default
       - sandbox-ctrl
+      - monitoring
     ports:
       - "${TAI_SERVE_PORT:-8000}:8000"
     depends_on:
@@ -300,6 +315,12 @@ services:
     environment:
       <<: *tai-app-env
       SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
+      # The monitoring writer's OpenTelemetry export: the collector of the
+      # `monitoring` profile, and the processor self-metrics its drop count reads.
+      # Unused unless the manifest names a monitoring_module.
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}"
+      OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED: "true"
+      OTEL_SERVICE_NAME: "${OTEL_SERVICE_NAME:-tai42}"
     volumes:
       - ./config:/app
       # Local storage provider data — the same volume serve mounts at the
@@ -321,10 +342,12 @@ services:
       - tai-sandbox-local-data:${SANDBOX_LOCAL_ROOT:-/var/lib/tai-sandbox-local}
     # Default datastore network + the sandbox control path (§ sandbox-ctrl): the
     # background-submit door creates sessions on the worker, so backend also
-    # reaches the engine control API.
+    # reaches the engine control API. monitoring: the monitoring backend's reads
+    # (§ monitoring).
     networks:
       - default
       - sandbox-ctrl
+      - monitoring
     depends_on:
       postgres:
         condition: service_healthy
@@ -382,6 +405,93 @@ services:
       timeout: 10s
       retries: 5
       start_period: 90s
+
+  # ---- monitoring profile: the OpenTelemetry collector --------------------------
+  # serve and backend export OTLP/HTTP here; the collector maps the platform's
+  # attribute names onto Langfuse's (otel-collector.yaml) and sends them to
+  # ${LANGFUSE_HOST}/api/public/otel with the project key pair, retrying from a
+  # durable queue so a backend outage is buffered, not dropped. Its own telemetry
+  # (otelcol_exporter_queue_size, otelcol_exporter_send_failed_spans, …) is served
+  # on 8888 and its health on 13133, both published on loopback for the host's
+  # scraper. The image is distroless (no shell, no HTTP client), so the health is
+  # probed by `otel-collector-health`.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    profiles: ["monitoring"]
+    logging: *default-logging
+    restart: unless-stopped
+    # Each limit is twice the collector's measured maximum while it carries about
+    # 12,700 spans: the process's resident memory peaks at 286.6 MiB (about
+    # 180 MiB of it the mapped binary and file queue, about 103 MiB heap), and its
+    # CPU peaks at 0.179 cores over a 1-second window. Two limits of these
+    # figures: CPU bursts of 0.7-0.9 core over 100 ms are throttled at this quota,
+    # which delays batching and export without dropping spans (the file queue
+    # holds them); and they come from a backend that answers at once, while a
+    # real Langfuse answers slower, so the queue, and with it the memory, can grow
+    # beyond them.
+    mem_limit: 574m
+    cpus: 0.36
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      # Both come from `.env`. Not `:?`-guarded: compose interpolates every service
+      # whatever the active profiles, so a guard would refuse deployments that do not
+      # run monitoring. With LANGFUSE_HOST unset (or the backend down) the collector
+      # still reports ready and accepts spans but cannot send them: it retries
+      # forever, logged at INFO ("Exporting failed. Will retry the request after
+      # interval"), the spans pile up in the durable queue and only
+      # otelcol_exporter_queue_size grows, until the queue reaches
+      # otelcol_exporter_queue_capacity and otelcol_exporter_enqueue_failed_spans
+      # counts the spans it refuses. With the credential unset or wrong the backend
+      # answers 401: each batch is dropped, logged at ERROR and counted in
+      # otelcol_exporter_send_failed_spans.
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+      # base64 of "<public key>:<secret key>", named outside the LANGFUSE_ prefix the
+      # app's monitoring plugin owns.
+      OTEL_COLLECTOR_LANGFUSE_AUTH: ${OTEL_COLLECTOR_LANGFUSE_AUTH:-}
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+      - tai-otel-collector-queue:/var/lib/otelcol/queue
+    # default: serve and backend export here; monitoring: the backend it sends to.
+    networks:
+      - default
+      - monitoring
+    ports:
+      - "127.0.0.1:${OTEL_COLLECTOR_METRICS_PORT:-8888}:8888"
+      - "127.0.0.1:${OTEL_COLLECTOR_HEALTH_PORT:-13133}:13133"
+    depends_on:
+      otel-collector-queue-init:
+        condition: service_completed_successfully
+
+  # The collector runs as uid 10001 and a fresh named volume is root-owned, so the
+  # queue directory is handed to that uid before the collector starts.
+  otel-collector-queue-init:
+    image: busybox:1.37
+    profiles: ["monitoring"]
+    command: ["chown", "10001:10001", "/var/lib/otelcol/queue"]
+    volumes:
+      - tai-otel-collector-queue:/var/lib/otelcol/queue
+
+  # The collector's health: it is healthy while the collector's health_check
+  # extension answers "Server available", which it does once every pipeline runs.
+  # `up --wait` therefore returns only when the collector is ready to receive, and
+  # `docker compose ps` shows the collector's health here.
+  otel-collector-health:
+    image: busybox:1.37
+    profiles: ["monitoring"]
+    logging: *default-logging
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    init: true
+    depends_on:
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://otel-collector:13133/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
 
   # ---- core datastores -----------------------------------------------------
   postgres:
@@ -723,6 +833,17 @@ networks:
   # session (an inner container of the daemon, never on any compose network)
   # reaches nothing of the deployment. NEVER place a datastore on this network.
   sandbox-ctrl:
+  # Monitoring path (§ monitoring): ONLY serve, backend and otel-collector of
+  # this stack. A monitoring backend run as its own compose project joins it as an
+  # external network (compose/langfuse/ attaches langfuse-web, reached at
+  # http://langfuse-web:3000), so the two stacks stay separately managed while
+  # neither's datastores resolve on the other's network. Like every network of
+  # this file it is scoped to the project: Docker names it
+  # `<project name>_monitoring` (`tai_monitoring` under the default project
+  # name), so two core stacks on one host never share it and each sends its
+  # records to its own collector and backend only. It exists once this stack is
+  # up. NEVER place a datastore on this network.
+  monitoring:
 
 volumes:
   tai-postgres-data:
@@ -736,6 +857,8 @@ volumes:
   tai-minio-data:
   tai-rabbitmq-data:
   tai-redis-agents-data:
+  # The OpenTelemetry collector's durable sending queue (monitoring profile).
+  tai-otel-collector-queue:
   # Sandbox durable block store: the rootless-dind daemon's /var/lib/docker tree,
   # where the sandbox engine's persistent tai-sbx-<workspace_key> inner volumes live — makes
   # durability="persistent" survive an engine recycle (the reciprocal dependency

@@ -338,11 +338,23 @@ required values (the stack refuses to start while any required secret is
 unset); create the config dir — `mkdir -p config && cp manifest.example.yml
 config/manifest.yml && touch config/.env`; then `docker compose up -d`. Optional
 profiles: `--profile celery` (RabbitMQ broker), `--profile minio` (S3
-storage), `--profile agents-redis` (module-capable Redis). The `celery` and
+storage), `--profile agents-redis` (module-capable Redis), `--profile monitoring`
+(the OpenTelemetry collector serve and backend export monitoring records to). The `celery` and
 `minio` profiles drive the celery backend and S3 storage plugins, which are not
 in the minimal image — add them via a derived image or a marketplace install
 first. Langfuse runs as its own stack from `compose/langfuse/` and likewise
-needs the monitoring plugin added.
+needs the monitoring plugin added. Its `langfuse-web` joins the core stack's
+`<project>_monitoring` network (`tai_monitoring` by default; `TAI_CORE_PROJECT` in
+`compose/langfuse/.env` names the core project), so bring the core stack up first;
+serve, backend and the `monitoring` profile's collector then reach it at
+`http://langfuse-web:3000`. The network is scoped to one core stack: with several on
+one host, run one Langfuse stack per core stack, each under its own `-p` and
+`LANGFUSE_WEB_PORT`. Set that address as `LANGFUSE_HOST` twice: in `config/.env`
+with `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (the plugin's reads), and in
+`.env` with `OTEL_COLLECTOR_LANGFUSE_AUTH` (the collector's sends). The core stack
+owns the network: if it was taken `down` and up again while `langfuse-web` was
+stopped, that container refuses to start (`network … not found`); bring it back with
+`docker compose -f compose/langfuse/docker-compose.yml up -d --force-recreate langfuse-web`.
 
 ### Recycle and graceful shutdown
 

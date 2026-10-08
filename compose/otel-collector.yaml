@@ -1,0 +1,74 @@
+# The OpenTelemetry collector between the platform's monitoring writer and Langfuse.
+# The platform exports OTLP with its own vendor-neutral attribute names (tai42.*,
+# gen_ai.*, input.value / output.value); this config maps them onto Langfuse's
+# vocabulary and does the batching, retrying and sending. Changing the backend means
+# swapping the transform and the exporter only.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage:
+    directory: /var/lib/otelcol/queue
+    create_directory: true
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  batch: {}
+  transform/langfuse:
+    error_mode: propagate
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["langfuse.trace.name"], attributes["tai42.trace.name"]) where attributes["tai42.trace.name"] != nil
+          - set(attributes["langfuse.trace.tags"], attributes["tai42.trace.tags"]) where attributes["tai42.trace.tags"] != nil
+          - set(attributes["langfuse.trace.metadata"], attributes["tai42.trace.metadata"]) where attributes["tai42.trace.metadata"] != nil
+          - set(attributes["langfuse.version"], attributes["tai42.run.version"]) where attributes["tai42.run.version"] != nil
+          - set(attributes["langfuse.observation.level"], attributes["tai42.level"]) where attributes["tai42.level"] != nil
+          - set(attributes["langfuse.observation.status_message"], attributes["tai42.status_message"]) where attributes["tai42.status_message"] != nil
+          - set(attributes["langfuse.observation.type"], "event") where attributes["tai42.span.kind"] == "EVENT"
+          - set(attributes["langfuse.observation.cost_details"], Concat(["{\"total\":", String(attributes["tai42.usage.cost_usd"]), "}"], "")) where attributes["tai42.usage.cost_usd"] != nil
+          - delete_key(attributes, "tai42.trace.name")
+          - delete_key(attributes, "tai42.trace.tags")
+          - delete_key(attributes, "tai42.trace.metadata")
+          - delete_key(attributes, "tai42.run.version")
+          - delete_key(attributes, "tai42.level")
+          - delete_key(attributes, "tai42.status_message")
+          - delete_key(attributes, "tai42.usage.cost_usd")
+
+exporters:
+  otlphttp/langfuse:
+    endpoint: ${env:LANGFUSE_HOST}/api/public/otel
+    headers:
+      Authorization: Basic ${env:OTEL_COLLECTOR_LANGFUSE_AUTH}
+    sending_queue:
+      enabled: true
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0
+
+service:
+  extensions: [health_check, file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, transform/langfuse]
+      exporters: [otlphttp/langfuse]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
