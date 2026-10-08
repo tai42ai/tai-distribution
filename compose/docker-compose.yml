@@ -674,15 +674,17 @@ services:
       # SESSION never mounts this volume.
       - tai-sandbox-certs:/certs/client
       # Egress firewall init (§ dind egress firewall), RO. Programmed into the
-      # inner bridge's DOCKER-USER chain at daemon start, before any session
-      # create — deployment-internal ranges + metadata denied, internet OPEN.
+      # inner bridge's DOCKER-USER chain once the daemon has initialised, before
+      # the engine reports healthy — deployment-internal ranges + metadata denied,
+      # internet OPEN.
       - ./sandbox/dind-egress-firewall.sh:/usr/local/bin/dind-egress-firewall.sh:ro
     # Install the inner-bridge egress firewall as ROOT (this entrypoint runs as
     # root via `user: "0:0"`; the firewall `nsenter -n`s into dockerd's rootless
     # netns), then DROP the daemon back to the rootless user via
     # `su rootless -c dockerd-entrypoint.sh`. The firewall backgrounds itself and
-    # waits for dockerd to create DOCKER-USER and configure its uplink before
-    # installing the full ruleset and writing its ready marker; the healthcheck
+    # waits for dockerd to create DOCKER-USER, answer on its control API (its init,
+    # docker0 included, complete) and configure its uplink before installing the
+    # full ruleset and writing its ready marker; the healthcheck
     # gates readiness on that marker, so a session create cannot race a half-built
     # chain. `exec` inside `su` so signals reach dockerd; DOCKER_TLS_CERTDIR is
     # re-exported because `su` resets the environment.
