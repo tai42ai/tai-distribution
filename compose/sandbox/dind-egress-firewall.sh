@@ -1,6 +1,7 @@
 #!/bin/sh
-# dind inner-bridge egress firewall — programmed at daemon start, BEFORE the
-# daemon accepts any session create. Installs rules at the top of the
+# dind inner-bridge egress firewall — programmed once the daemon has finished
+# initialising, BEFORE the engine reports healthy (the healthcheck gates on the
+# ready marker this script writes last). Installs rules at the top of the
 # DOCKER-USER chain (docker traverses it FIRST in FORWARD and never flushes it
 # on reloads) so inner-session egress to the deployment is filtered.
 #
@@ -70,23 +71,29 @@ in_netns() { nsenter -t "$DOCKERD_PID" -n "$@"; }
 # (docker0) and the rootless vpnkit uplink (tap0, e.g. 192.168.65.0/24) — carry
 # the sandbox's own egress + DNS plumbing and fall inside the private ranges
 # denied below, so they are ACCEPTed first (above the DROPs) or egress + DNS die.
-# The uplink is the DEFAULT ROUTE's device, and rootlesskit finishes configuring
-# it AFTER dockerd first answers, so a single snapshot taken the instant the
-# DOCKER-USER chain appears can catch docker0 alone and then DROP the session's
-# own resolver on the still-unconfigured uplink. WAIT until the default-route
-# uplink's on-link subnet exists, THEN take the allow-set (both subnets), so the
-# ACCEPT for the resolver's subnet is never missed. Derived from the routes so the
-# set tracks whatever docker0/vpnkit actually use.
+# Neither is guaranteed to exist when the DOCKER-USER chain appears: dockerd
+# creates DOCKER-USER when its network controller starts and configures docker0
+# only later in its init, and rootlesskit finishes configuring the uplink (the
+# DEFAULT ROUTE's device) after dockerd first answers. A snapshot missing docker0
+# DROPs every reply to a session (the replies are addressed to the docker0
+# subnet); one missing the uplink DROPs the session's own resolver. So WAIT until
+# the daemon answers on its control API (its init — docker0 included — is
+# complete) AND the uplink's on-link subnet exists, THEN take the allow-set.
+# Derived from the routes so the set tracks whatever docker0/vpnkit actually use.
+daemon_answers() {
+  docker --tlsverify --tlscacert /certs/client/ca.pem --tlscert /certs/client/cert.pem \
+    --tlskey /certs/client/key.pem -H tcp://127.0.0.1:2376 info >/dev/null 2>&1
+}
 i=0
 ALLOW_CIDRS=""
 while : ; do
   UPLINK_DEV="$(in_netns ip -o route show default 2>/dev/null | awk '{for (k=1;k<NF;k++) if ($k=="dev") {print $(k+1); exit}}')"
-  if [ -n "$UPLINK_DEV" ] && in_netns ip -o route show scope link dev "$UPLINK_DEV" 2>/dev/null | grep -qE '^[0-9]+\.'; then
+  if daemon_answers && [ -n "$UPLINK_DEV" ] && in_netns ip -o route show scope link dev "$UPLINK_DEV" 2>/dev/null | grep -qE '^[0-9]+\.'; then
     ALLOW_CIDRS="$(in_netns ip -o route show scope link 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.' || true)"
     break
   fi
   i=$((i + 1))
-  [ "$i" -gt 120 ] && fail "the daemon's default-route uplink subnet never appeared within 120s"
+  [ "$i" -gt 120 ] && fail "the daemon did not answer with its default-route uplink subnet up within 120s"
   sleep 1
 done
 [ -n "$ALLOW_CIDRS" ] || fail "could not resolve the daemon's own subnets to allow"
