@@ -116,7 +116,7 @@ x-tai-app-env: &tai-app-env
 
   # --- namespace fallback ------------------------------------------------------
   # Catch-all for every redis consumer without a specific *_REDIS_URL above; the
-  # flow engine payload store (FLOW_REDIS_URL) resolves through this fallback.
+  # flow engine's run markers and park index (FLOW_REDIS_URL) resolve through this fallback.
   TAI_DEFAULT_REDIS_URL: redis://redis:6379/0
 
   # --- postgres registry: the "default" database -------------------------------
