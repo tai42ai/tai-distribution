@@ -481,6 +481,25 @@ jobs:
           done
           python compose/tests/parity_app_env.py
 
+  # Contract-range agreement gate, the same check release.yml runs at the tag:
+  # the pinned tai42-contract version in docker/pypi-requirements.txt must lie
+  # inside the contract range the pinned studio commit (docker/STUDIO_REF)
+  # declares. Checked on every PR and main push so a half pair (new pins with
+  # the old studio ref, or the reverse) cannot merge. It reads no secret; the
+  # studio repository is derived from the repository owner, so a fork checks
+  # against its own tai-studio.
+  alignment:
+    needs: reuse
+    if: ${{ needs.reuse.outputs.should_skip != 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Pinned contract version is inside the studio's declared range
+        env:
+          STUDIO_REPO_URL: https://github.com/${{ github.repository_owner }}/tai-studio.git
+        run: uv run --python 3.13 --with packaging python scripts/check_image_alignment.py --studio-repo "$STUDIO_REPO_URL"
+
   # Unit-test the release alignment gate (scripts/check_image_alignment.py) on
   # every PR so a regression in the gate is caught before it runs on a tag. The
   # script needs `packaging`; uv supplies the pinned interpreter, pytest and
