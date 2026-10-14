@@ -131,7 +131,7 @@ located by an env var the skeleton reads:
 |---|---|---|---|
 | Plugin prefix directory | `TAI_PLUGINS_PREFIX` | image venv (ephemeral) | Where marketplace installs land; on a persistent disk they survive container recreation. |
 | Manifest file | `TAI_MANIFEST_PATH` (or `TAI_CONFIG_DIR_PATH` for the whole config dir) | `/app/manifest.yml` | Marketplace installs patch the manifest; losing it drops every runtime-added plugin's registration. |
-| Local storage root | `STORAGE_LOCAL_ROOT_PATH` | `./templates` under `/app` | Where the baked local storage provider keeps stored files; the compose bundle mounts the `tai-storage-local-data` named volume there. |
+| Local storage root | `STORAGE_LOCAL_ROOT_PATH` | set by the image to `/app/templates` (required: the provider refuses every call while it is unset) | Where the baked local storage provider keeps stored files; the compose bundle mounts the `tai-storage-local-data` named volume there. |
 
 The prefix and the manifest work together: the prefix keeps the installed
 **code**, the manifest keeps its **registration**. Persist only one and a
@@ -338,11 +338,23 @@ required values (the stack refuses to start while any required secret is
 unset); create the config dir — `mkdir -p config && cp manifest.example.yml
 config/manifest.yml && touch config/.env`; then `docker compose up -d`. Optional
 profiles: `--profile celery` (RabbitMQ broker), `--profile minio` (S3
-storage), `--profile agents-redis` (module-capable Redis). The `celery` and
+storage), `--profile agents-redis` (module-capable Redis), `--profile monitoring`
+(the OpenTelemetry collector serve and backend export monitoring records to). The `celery` and
 `minio` profiles drive the celery backend and S3 storage plugins, which are not
 in the minimal image — add them via a derived image or a marketplace install
 first. Langfuse runs as its own stack from `compose/langfuse/` and likewise
-needs the monitoring plugin added.
+needs the monitoring plugin added. Its `langfuse-web` joins the core stack's
+`<project>_monitoring` network (`tai_monitoring` by default; `TAI_CORE_PROJECT` in
+`compose/langfuse/.env` names the core project), so bring the core stack up first;
+serve, backend and the `monitoring` profile's collector then reach it at
+`http://langfuse-web:3000`. The network is scoped to one core stack: with several on
+one host, run one Langfuse stack per core stack, each under its own `-p` and
+`LANGFUSE_WEB_PORT`. Set that address as `LANGFUSE_HOST` twice: in `config/.env`
+with `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (the plugin's reads), and in
+`.env` with `OTEL_COLLECTOR_LANGFUSE_AUTH` (the collector's sends). The core stack
+owns the network: if it was taken `down` and up again while `langfuse-web` was
+stopped, that container refuses to start (`network … not found`); bring it back with
+`docker compose -f compose/langfuse/docker-compose.yml up -d --force-recreate langfuse-web`.
 
 ### Recycle and graceful shutdown
 
@@ -353,11 +365,15 @@ change in-process. A profile apply that touches one runs an orchestrated rolling
 things in `compose/docker-compose.yml` make that safe:
 
 - **`TAI_SUPERVISED: compose`** in the shared `x-tai-app-env` anchor marks the
-  supervision shape so the platform detects compose deterministically and refuses
-  a recycle-class change to the anchor-pinned keys (they are re-injected from the
+  supervision shape so the platform detects compose deterministically, and
+  **`TAI_SUPERVISED_PINNED_KEYS`** beside it declares the keys the deployment pins
+  (a JSON list: every key of the anchor except the supervision pair). The platform
+  refuses a settings profile that changes a pinned key (it is re-injected from the
   compose file on respawn, so a profile-carried change would silently revert) —
   naming the manual step (edit the compose file, then recreate) instead of a
-  silent no-op. The full pinned set is the `x-tai-app-env` anchor itself.
+  silent no-op. A supervised marker without the pinned list refuses boot, so keep
+  the two together; `compose/tests/parity_app_env.py` checks the list against the
+  anchor.
 - **`stop_grace_period: 300s`** on `serve` and `backend` gives each `>=` its
   in-flight drain budget (uvicorn request drain; arq `job_completion_wait` /
   celery warm-drain) before Compose sends SIGKILL, so a recycle or a plain

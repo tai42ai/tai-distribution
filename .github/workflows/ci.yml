@@ -452,10 +452,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
-      # Compose refusal-list parity: assert the x-tai-app-env anchor keys equal
-      # the product's compose refusal list. Installs tai42-skeleton at the version
-      # the shipped image pins (docker/pypi-requirements.txt) so the test can import
-      # config.recycle_policy — no image extras needed, the import is core only.
+      # Compose pinned-set parity: assert the x-tai-app-env anchor keys equal the
+      # anchor's declared TAI_SUPERVISED_PINNED_KEYS list. Installs tai42-skeleton at
+      # the version the shipped image pins (docker/pypi-requirements.txt) so the test
+      # can import config.recycle_policy — no image extras needed, the import is core only.
       - name: compose env-anchor refusal parity
         run: |
           set -euo pipefail
