@@ -150,7 +150,7 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --refresh --no-sources \
       /src/contract \
-      /src/kit \
+      "/src/kit[langgraph-checkpoint-postgres]" \
       "/src/toolbox[http,classifier]" \
       /src/cli \
       "/src/skeleton[toolbox,files]" \
@@ -229,6 +229,16 @@ ARG SECURITY_UPDATES_EPOCH
 RUN echo "security-updates epoch: ${SECURITY_UPDATES_EPOCH}" \
  && apt-get update \
  && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
+# The Postgres checkpoint/store backend (the kit's langgraph-checkpoint-postgres
+# extra) talks to Postgres through psycopg, whose pure-Python build loads the
+# libpq client library at runtime from the system. The slim base does not carry
+# it, so install the runtime library (not the -dev headers) in its own cached
+# layer; without it the backend fails to import the moment a deployment selects
+# it.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libpq5 \
  && rm -rf /var/lib/apt/lists/*
 
 # The base interpreter's pip is unused at runtime (the app venv carries its own

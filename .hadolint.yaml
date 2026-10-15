@@ -5,6 +5,12 @@ ignored:
   # pruned without notice — a pinned version breaks the build the moment upstream
   # rolls it. Leaving apk unpinned is accepted practice for Alpine bases.
   - DL3018
+  # DL3008 (pin apt package versions): the final image deliberately installs the
+  # latest patched system packages — the security-updates layer re-runs every
+  # build to pull Debian's current uploads, and pinning an apt version would both
+  # break the build when that version is pruned from the index and hold the
+  # package below a published security fix. Same stance as DL3018 for apk.
+  - DL3008
   # DL3022 (`COPY --from` must reference a previous stage): the local-source
   # stages copy from `siblings`, a buildx NAMED BUILD CONTEXT passed as
   # `--build-context siblings=..`. hadolint resolves stage names only, so it
