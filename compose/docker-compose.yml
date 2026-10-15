@@ -214,6 +214,12 @@ services:
     cpus: 1.0
     command: ["db", "migrate"]
     environment: *tai-app-env
+    volumes:
+      # Marketplace plugin prefix (TAI_PLUGINS_PREFIX, set by the image to
+      # /app/plugins): `db migrate` discovers migration chains from the plugins
+      # prefix, so the migrate runner mounts the same named volume the app
+      # services install plugins onto.
+      - tai-plugins-data:/app/plugins
     depends_on:
       postgres:
         condition: service_healthy
@@ -261,6 +267,11 @@ services:
       # inside the ./config bind mount so it survives a container recreation
       # independently of the config directory.
       - tai-storage-local-data:/app/templates
+      # Marketplace plugin prefix: a marketplace `pip install --prefix` lands
+      # plugin code at TAI_PLUGINS_PREFIX (the image sets /app/plugins). This
+      # named volume keeps the installs across container recreation and shares
+      # the installed set with the other app services.
+      - tai-plugins-data:/app/plugins
       - tai-prometheus:/home/tai
       # Sandbox mTLS client certs (RO), shared from sandbox-engine: the
       # sandbox-docker provider reads cert.pem/key.pem/ca.pem from this fixed
@@ -341,6 +352,10 @@ services:
       # Local storage provider data — the same volume serve mounts at the
       # provider's root (STORAGE_LOCAL_ROOT_PATH, set by the image to /app/templates).
       - tai-storage-local-data:/app/templates
+      # Marketplace plugin prefix — the same volume serve mounts at
+      # TAI_PLUGINS_PREFIX (/app/plugins); the installed plugin set is shared
+      # and survives container recreation.
+      - tai-plugins-data:/app/plugins
       # Own multiproc volume (NOT the shared tai-prometheus): the backend worker
       # names its Prometheus files by PID in its own PID namespace and would
       # collide with serve's workers on identical filenames if they shared a
@@ -404,6 +419,10 @@ services:
       # Reads serve's multiproc dir — shares the tai-prometheus volume with serve
       # (the writer). The backend worker writes to its own volume, unscraped here.
       - tai-prometheus:/home/tai
+      # Marketplace plugin prefix — the same named volume the app services
+      # install onto at TAI_PLUGINS_PREFIX (/app/plugins), so this service sees
+      # the same installed plugin set.
+      - tai-plugins-data:/app/plugins
     depends_on:
       redis:
         condition: service_healthy
@@ -869,6 +888,11 @@ volumes:
   # the provider's root (STORAGE_LOCAL_ROOT_PATH, set by the image to
   # /app/templates), so stored files survive a container recreation.
   tai-storage-local-data:
+  # Marketplace plugin prefix: the directory TAI_PLUGINS_PREFIX names (the image
+  # sets /app/plugins), where a marketplace `pip install --prefix` lands plugin
+  # code — mounted into every app-image service so the installed plugin set is
+  # shared and survives a container recreation.
+  tai-plugins-data:
   tai-prometheus:
   tai-prometheus-backend:
   tai-minio-data:
