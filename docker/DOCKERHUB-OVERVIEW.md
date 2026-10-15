@@ -1,6 +1,6 @@
 # tai
 
-The official image of the [tai42 platform](https://github.com/tai42ai/tai42) — one minimal-core, multi-arch (amd64 + arm64) image that runs every deployment role. It ships the platform core, the agents layer, and the baked reference providers (local storage, the arq task backend, redis identity, both sandbox providers) and bakes the built Studio SPA. What activates at boot is decided by your manifest and environment.
+The official image of the [tai42 platform](https://github.com/tai42ai/tai42) — one minimal-core, multi-arch (amd64 + arm64) image that runs every deployment role. It ships the platform core, the agents layer, and the baked reference providers (local storage, the arq task backend, redis identity, both sandbox providers) and bakes the built Studio SPA. The agents layer's checkpoint/store runs on the baked Redis backend by default, and the image also carries the Postgres backend (with its libpq runtime) so a deployment can select it by configuration. What activates at boot is decided by your manifest and environment.
 
 - **Docs:** [docs.tai42.ai](https://docs.tai42.ai)
 - **Distribution (Compose bundle, release CI):** [tai42ai/tai-distribution](https://github.com/tai42ai/tai-distribution)

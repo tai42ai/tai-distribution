@@ -246,6 +246,20 @@ jobs:
           import tai42_toolbox.tools.classify
           print("request and classify tool modules import")
           '
+      # The image ships the Postgres checkpoint/store backend ready for a
+      # deployment to select, so its module must import on the built image: the
+      # langgraph-checkpoint-postgres wheels (the kit's extra) and the libpq
+      # client library psycopg loads at runtime must both be present. psycopg's
+      # import is what loads libpq, so importing it here fails the job when the
+      # runtime library is missing, and the saver import fails when the extra's
+      # wheels are not installed.
+      - name: Postgres checkpoint backend imports on the image
+        run: |
+          docker run --rm --entrypoint python ${{ env.IMAGE_REF }} -c '
+          import psycopg
+          from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+          print("postgres checkpoint backend imports:", psycopg.__version__, AsyncPostgresSaver.__name__)
+          '
       # The two constraint probes install a real marketplace plugin at versions
       # that move with every core major bump: the newest release the image's
       # pinned core admits, and the newest older release built for a previous
