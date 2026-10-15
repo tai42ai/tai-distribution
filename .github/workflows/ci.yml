@@ -397,6 +397,51 @@ jobs:
               exit 1
             fi
           done < "$RUNNER_TEMP/probe-versions.txt"
+      # The image bakes TAI_PLUGINS_PREFIX to a tai-owned, writable directory so
+      # a deployment installs marketplace plugins with no prefix override. Prove
+      # the baked default alone works, as the non-root runtime user: resolve the
+      # prefix from the image's own env (KeyError here reds the step at once on
+      # an image that does not bake it), assert it is writable by that user, then
+      # `pip install --prefix` onto the baked prefix inside the container relying
+      # solely on the baked env, and assert the plugin's own dist-info lands
+      # there. Same core list, non-root uid, and propagation retry as the
+      # explicit-prefix probe above.
+      - name: Baked default plugin prefix accepts a marketplace install
+        run: |
+          set -euo pipefail
+          prefix=$(docker run --rm --entrypoint python ${{ env.IMAGE_REF }} \
+            -c 'import os; print(os.environ["TAI_PLUGINS_PREFIX"])')
+          echo "baked TAI_PLUGINS_PREFIX=${prefix}"
+          if ! docker run --rm --entrypoint sh ${{ env.IMAGE_REF }} -c 'test -w "$TAI_PLUGINS_PREFIX"'; then
+            echo "::error::the baked TAI_PLUGINS_PREFIX is not writable by the non-root runtime user"
+            exit 1
+          fi
+          while read -r plugin accept refuse; do
+            echo "== baked-default prefix probe: ${plugin}==${accept} =="
+            installed=false
+            for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
+              if docker run --rm --entrypoint sh ${{ env.IMAGE_REF }} -c '
+                set -eu
+                python -m pip install --prefix "$TAI_PLUGINS_PREFIX" "$1==$2"
+                pkg=$(printf %s "$1" | tr - _)
+                ls -d "$TAI_PLUGINS_PREFIX"/lib/python*/site-packages/"${pkg}"-*.dist-info >/dev/null
+                ' sh "${plugin}" "${accept}" > baked-prefix.log 2>&1; then
+                cat baked-prefix.log
+                echo "baked-default prefix install of ${plugin} landed under ${prefix}"
+                installed=true
+                break
+              fi
+              cat baked-prefix.log
+              echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+              if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
+                sleep "${PYPI_PROPAGATION_SLEEP}"
+              fi
+            done
+            if [ "${installed}" != true ]; then
+              echo "::error::the baked-default prefix install of ${plugin} did not succeed after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/probe-versions.txt"
       # The shipped constraints file is derived from the venv at build; assert it
       # equals the release manifest's extras-stripped pins so a drift between what
       # the image holds and docker/pypi-requirements.txt reds here.

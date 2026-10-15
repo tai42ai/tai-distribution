@@ -293,11 +293,16 @@ ENV PIP_CONSTRAINT=/opt/tai/constraints.txt \
 # /app is the config dir (.env + manifest.yml) and WORKDIR; owned by tai so a
 # writable bind mount / volume works under the non-root user. /app/templates is
 # the local storage provider's root (the provider refuses every call until
-# STORAGE_LOCAL_ROOT_PATH is set, so the image sets it); created tai-owned so a
-# fresh named volume mounted there inherits that ownership and the non-root
-# process can write.
-RUN install -d -o tai -g tai /app /app/templates
+# STORAGE_LOCAL_ROOT_PATH is set, so the image sets it). /app/plugins is the
+# marketplace plugin prefix (TAI_PLUGINS_PREFIX): a marketplace install
+# `pip install --prefix`es the package onto it, and the non-root runtime user
+# cannot write the image's root-owned venv, so the prefix must be a writable
+# directory — the image bakes one so a deployment installs plugins out of the
+# box. Both are created tai-owned so a fresh named volume mounted there inherits
+# that ownership and the non-root process can write.
+RUN install -d -o tai -g tai /app /app/templates /app/plugins
 ENV STORAGE_LOCAL_ROOT_PATH=/app/templates
+ENV TAI_PLUGINS_PREFIX=/app/plugins
 WORKDIR /app
 # Numeric uid:gid so runtimes can verify non-root without resolving the name.
 USER 1000:1000

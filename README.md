@@ -89,12 +89,15 @@ with no restart — including a first-ever install (the plugin prefix is on
 caches). The exception is **router** and **middleware** plugins: their handlers
 and middleware stack are frozen into the ASGI app when the process builds, so a
 router or middleware plugin — net-new or an upgrade of an already-listed one —
-takes effect only on the next process restart. A marketplace install therefore
-needs `TAI_PLUGINS_PREFIX` set to a writable, mounted directory (see
-[Persistence](#persistence)): the image runs as a non-root user that cannot
-write the image's own venv, so an install without a writable prefix fails — and
-because the prefix is a mounted, persistent directory, the installs also
-**survive a container recreation**.
+takes effect only on the next process restart. A marketplace install writes to
+the directory `TAI_PLUGINS_PREFIX` names: the image runs as a non-root user that
+cannot write its own venv, so the prefix must be a writable directory. The image
+bakes `TAI_PLUGINS_PREFIX=/app/plugins` — a writable, tai-owned directory it
+creates — so a deployment installs plugins out of the box; the compose bundle
+mounts the `tai-plugins-data` named volume there (see
+[Persistence](#persistence)), so the installs also **survive a container
+recreation**. An operator may override the prefix to another writable, mounted
+directory.
 
 **Build time, via a derived image.** Bake extra plugins into your own image on
 top of this one — the reproducible path for a fixed roster:
@@ -134,7 +137,7 @@ located by an env var the skeleton reads:
 
 | What | Env var | Default | Why it must persist |
 |---|---|---|---|
-| Plugin prefix directory | `TAI_PLUGINS_PREFIX` | none — must be set | Where marketplace installs land; the non-root runtime user cannot write the image's venv, so this must point at a writable mounted directory, and on a persistent disk the installs survive container recreation. |
+| Plugin prefix directory | `TAI_PLUGINS_PREFIX` | set by the image to `/app/plugins` (a writable, tai-owned directory the image creates) | Where marketplace installs land; the non-root runtime user cannot write the image's venv, so this points at a writable mounted directory, and on a persistent disk the installs survive container recreation. The compose bundle mounts the `tai-plugins-data` named volume there. |
 | Manifest file | `TAI_MANIFEST_PATH` (or `TAI_CONFIG_DIR_PATH` for the whole config dir) | `/app/manifest.yml` | Marketplace installs patch the manifest; losing it drops every runtime-added plugin's registration. |
 | Local storage root | `STORAGE_LOCAL_ROOT_PATH` | set by the image to `/app/templates` (required: the provider refuses every call while it is unset) | Where the baked local storage provider keeps stored files; the compose bundle mounts the `tai-storage-local-data` named volume there. |
 
