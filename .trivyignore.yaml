@@ -1,4 +1,6 @@
-# Accepted vulnerabilities, scoped to pip's vendored dependency copies.
+# Accepted scan findings, each scoped as narrowly as the finding allows.
+#
+# Vulnerabilities: scoped to pip's vendored dependency copies.
 #
 # pip ships its own copies of several libraries under pip/_vendor (recorded in
 # pip/_vendor/vendor.txt). Those copies serve pip's own internals during package
@@ -42,3 +44,23 @@ vulnerabilities:
     statement: >-
       Accepted only for pip's vendored urllib3 under pip/_vendor; no pip release
       vendors the fix yet. The image's own urllib3 is 2.8.0.
+
+# Secrets: the gcp-service-account rule matches the JSON type field of a service
+# account file on its own. The anthropic SDK's docstrings for the Managed Agents
+# `execution_identity` field quote that type field as the field's default value;
+# the files hold no key material. Each path is one file that carries the docstring
+# (agents.py also as its compiled .pyc), so the rule still gates every other file.
+secrets:
+  - id: gcp-service-account
+    paths:
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/resources/beta/agents/agents.py
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/resources/beta/agents/__pycache__/agents.cpython-313.pyc
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/types/beta/agent_create_params.py
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/types/beta/agent_update_params.py
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/types/beta/beta_managed_agents_agent.py
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/types/beta/beta_managed_agents_session_agent.py
+      - /opt/tai/venv/lib/python3.13/site-packages/anthropic/types/beta/beta_managed_agents_session_thread_agent.py
+    statement: >-
+      Accepted only for the anthropic SDK's execution_identity docstrings, which
+      quote the service-account type value as documentation and carry no
+      credential.
