@@ -81,18 +81,20 @@ ways:
 
 **Runtime, via the marketplace.** Install, update, and uninstall plugins against
 a running server through the marketplace API/Studio — no rebuild. A
-marketplace install `pip install`s the package into the server's environment and
+marketplace install `pip install`s the package into the directory named by
+`TAI_PLUGINS_PREFIX` and
 patches the manifest in place, so the plugin is live on the next config reload
 with no restart — including a first-ever install (the plugin prefix is on
 `sys.path` from boot even while empty, and each reload invalidates the import
 caches). The exception is **router** and **middleware** plugins: their handlers
 and middleware stack are frozen into the ASGI app when the process builds, so a
 router or middleware plugin — net-new or an upgrade of an already-listed one —
-takes effect only on the next process restart. For those installs to **survive a
-container recreation**, set
-`TAI_PLUGINS_PREFIX` to a mounted, persistent directory (see
-[Persistence](#persistence)); without it, a marketplace install lands in the
-image's ephemeral venv and is lost when the container is replaced.
+takes effect only on the next process restart. A marketplace install therefore
+needs `TAI_PLUGINS_PREFIX` set to a writable, mounted directory (see
+[Persistence](#persistence)): the image runs as a non-root user that cannot
+write the image's own venv, so an install without a writable prefix fails — and
+because the prefix is a mounted, persistent directory, the installs also
+**survive a container recreation**.
 
 **Build time, via a derived image.** Bake extra plugins into your own image on
 top of this one — the reproducible path for a fixed roster:
@@ -113,12 +115,15 @@ USER tai
 ```
 
 The base image sets `PIP_CONSTRAINT`/`UV_CONSTRAINT` to a constraints file of its
-own core versions, so any `python -m pip install` — here, or run by hand in a
+own first-party core versions, so any `python -m pip install` — here, or run by hand in a
 container — that would move `tai42-contract`, `tai42-kit`, `tai42-skeleton`,
-`tai42-cli`, or any other package the image ships off the image's version is
+`tai42-cli`, or any other `tai42-*` package the image ships off the image's version is
 refused by the resolver rather than silently downgrading or upgrading the core and breaking
-the server. After a manual or derived-image install, run `python -m pip check`
-to confirm the environment is consistent.
+the server. The constraints file pins the first-party `tai42-*` core only, not
+the third-party packages the image ships, so a plugin's dependency closure must
+still accept the third-party versions the image already holds. After a manual or
+derived-image install, run `python -m pip check` to confirm the environment is
+consistent.
 
 Then reference the added plugins from your `manifest.yml`.
 
@@ -129,7 +134,7 @@ located by an env var the skeleton reads:
 
 | What | Env var | Default | Why it must persist |
 |---|---|---|---|
-| Plugin prefix directory | `TAI_PLUGINS_PREFIX` | image venv (ephemeral) | Where marketplace installs land; on a persistent disk they survive container recreation. |
+| Plugin prefix directory | `TAI_PLUGINS_PREFIX` | none — must be set | Where marketplace installs land; the non-root runtime user cannot write the image's venv, so this must point at a writable mounted directory, and on a persistent disk the installs survive container recreation. |
 | Manifest file | `TAI_MANIFEST_PATH` (or `TAI_CONFIG_DIR_PATH` for the whole config dir) | `/app/manifest.yml` | Marketplace installs patch the manifest; losing it drops every runtime-added plugin's registration. |
 | Local storage root | `STORAGE_LOCAL_ROOT_PATH` | set by the image to `/app/templates` (required: the provider refuses every call while it is unset) | Where the baked local storage provider keeps stored files; the compose bundle mounts the `tai-storage-local-data` named volume there. |
 
@@ -248,8 +253,7 @@ and, with it, the image's baked-in venv — but `TAI_PLUGINS_PREFIX` points at a
 mounted persistent directory outside the image, and the manifest holding each
 plugin's registration is likewise mounted (see [Persistence](#persistence)).
 Both halves of every marketplace install therefore carry over unchanged into
-the new container; only a plugin installed without the prefix (into the
-ephemeral venv) is lost with the old container.
+the new container.
 
 **Why step 2 exists.** What carries over was installed against the OLD
 release's core, and the new release may ship a newer `tai42-contract`. A

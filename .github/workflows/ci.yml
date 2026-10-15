@@ -25,6 +25,13 @@ env:
   # the two loops from drifting.
   PYPI_PROPAGATION_ATTEMPTS: '10'
   PYPI_PROPAGATION_SLEEP: '60'
+  # Marketplace plugins the three constraint probes install. Space-separated so a
+  # plugin is added by editing this one list; each is probed at the newest release
+  # the image's pinned core admits and the newest older release built for a
+  # previous core (both derived by scripts/select_probe_plugins.py). The prefix
+  # probe runs for every plugin, so a transitive that a plugin's closure caps
+  # below the image's held version is caught here.
+  PROBE_PLUGINS: 'tai42-monitoring-langfuse tai42-storage-s3'
 
 jobs:
   # Classify the push/PR as a version-only bump (a release-please train branch, or
@@ -260,19 +267,31 @@ jobs:
           from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
           print("postgres checkpoint backend imports:", psycopg.__version__, AsyncPostgresSaver.__name__)
           '
-      # The two constraint probes install a real marketplace plugin at versions
-      # that move with every core major bump: the newest release the image's
-      # pinned core admits, and the newest older release built for a previous
-      # core that the constraint must refuse. Derive both from the manifest's
+      # The constraint probes install each PROBE_PLUGINS entry at versions that
+      # move with every core major bump: the newest release the image's pinned
+      # core admits, and the newest older release built for a previous core that
+      # the constraint must refuse. Derive both per plugin from the manifest's
       # pinned core and the plugin's published metadata so no version literal is
-      # hand-kept here; a manifest with no compatible plugin published yet fails
-      # loudly rather than skipping the probe.
+      # hand-kept here; a plugin with no compatible release published yet fails
+      # loudly rather than skipping the probe. The derived triples (plugin accept
+      # refuse) are written to one file the three probe steps below loop over.
       - name: Derive the constraint-probe plugin versions from the image's pinned core
-        id: probe-versions
         run: |
-          uv run --python 3.13 --with packaging \
-            python scripts/select_probe_plugins.py \
-            --manifest docker/pypi-requirements.txt >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          : > "$RUNNER_TEMP/probe-versions.txt"
+          for plugin in ${PROBE_PLUGINS}; do
+            versions="$(uv run --python 3.13 --with packaging \
+              python scripts/select_probe_plugins.py \
+              --manifest docker/pypi-requirements.txt --plugin "${plugin}")"
+            accept="$(printf '%s\n' "${versions}" | sed -n 's/^accept=//p')"
+            refuse="$(printf '%s\n' "${versions}" | sed -n 's/^refuse=//p')"
+            if [ -z "${accept}" ] || [ -z "${refuse}" ]; then
+              echo "::error::could not derive accept/refuse versions for ${plugin}"
+              exit 1
+            fi
+            echo "${plugin} ${accept} ${refuse}" >> "$RUNNER_TEMP/probe-versions.txt"
+            echo "${plugin}: accept=${accept} refuse=${refuse}"
+          done
       # The image sets PIP_CONSTRAINT/UV_CONSTRAINT to a constraints file of its
       # own core versions, so a plugin that needs a different core major is
       # refused loudly by the resolver instead of silently downgrading the core.
@@ -289,23 +308,26 @@ jobs:
       - name: Core-pins constraint refuses an incompatible plugin, core unchanged
         run: |
           set -euo pipefail
-          if docker run --rm -u 0 --entrypoint python ${{ env.IMAGE_REF }} \
-              -m pip install "tai42-monitoring-langfuse==${{ steps.probe-versions.outputs.refuse }}" > refuse.log 2>&1; then
-            echo "::error::an incompatible plugin installed instead of being refused"
-            cat refuse.log
-            exit 1
-          fi
-          grep -q 'ResolutionImpossible' refuse.log || {
-            echo "::error::the install failed for a reason other than the constraint conflict"
-            cat refuse.log
-            exit 1
-          }
-          grep -q 'The user requested (constraint) tai42-' refuse.log || {
-            echo "::error::the refusal did not cite the image's core constraint"
-            cat refuse.log
-            exit 1
-          }
-          echo "incompatible plugin refused by the resolver constraint"
+          while read -r plugin accept refuse; do
+            echo "== refuse probe: ${plugin}==${refuse} =="
+            if docker run --rm -u 0 --entrypoint python ${{ env.IMAGE_REF }} \
+                -m pip install "${plugin}==${refuse}" > refuse.log 2>&1; then
+              echo "::error::an incompatible ${plugin} installed instead of being refused"
+              cat refuse.log
+              exit 1
+            fi
+            grep -q 'ResolutionImpossible' refuse.log || {
+              echo "::error::the ${plugin} install failed for a reason other than the constraint conflict"
+              cat refuse.log
+              exit 1
+            }
+            grep -q 'The user requested (constraint) tai42-' refuse.log || {
+              echo "::error::the ${plugin} refusal did not cite the image's core constraint"
+              cat refuse.log
+              exit 1
+            }
+            echo "incompatible ${plugin} refused by the resolver constraint"
+          done < "$RUNNER_TEMP/probe-versions.txt"
           docker run --rm --entrypoint python ${{ env.IMAGE_REF }} -m pip check
           docker run --rm --entrypoint python ${{ env.IMAGE_REF }} -c '
           import importlib.metadata as m
@@ -321,19 +343,26 @@ jobs:
       - name: Core-pins constraint admits a compatible plugin
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
-            if docker run --rm -u 0 --entrypoint python ${{ env.IMAGE_REF }} \
-                -m pip install "tai42-monitoring-langfuse==${{ steps.probe-versions.outputs.accept }}"; then
-              echo "compatible plugin installed under the constraint"
-              exit 0
+          while read -r plugin accept refuse; do
+            echo "== accept probe: ${plugin}==${accept} =="
+            installed=false
+            for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
+              if docker run --rm -u 0 --entrypoint python ${{ env.IMAGE_REF }} \
+                  -m pip install "${plugin}==${accept}"; then
+                echo "compatible ${plugin} installed under the constraint"
+                installed=true
+                break
+              fi
+              echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+              if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
+                sleep "${PYPI_PROPAGATION_SLEEP}"
+              fi
+            done
+            if [ "${installed}" != true ]; then
+              echo "::error::a compatible ${plugin} did not install under the constraint after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
+              exit 1
             fi
-            echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
-            if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
-              sleep "${PYPI_PROPAGATION_SLEEP}"
-            fi
-          done
-          echo "::error::a compatible plugin did not install under the constraint after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
-          exit 1
+          done < "$RUNNER_TEMP/probe-versions.txt"
       # The marketplace installer runs as the default non-root worker user and
       # `pip install --prefix <prefix>` into a writable prefix; --prefix resolves
       # against the running env, so the core is "already satisfied" and never
@@ -342,25 +371,32 @@ jobs:
       - name: Core-pins constraint keeps the marketplace prefix install working
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
-            if docker run --rm --entrypoint python ${{ env.IMAGE_REF }} \
-                -m pip install --prefix /tmp/probe-prefix "tai42-monitoring-langfuse==${{ steps.probe-versions.outputs.accept }}" > prefix.log 2>&1; then
+          while read -r plugin accept refuse; do
+            echo "== prefix probe: ${plugin}==${accept} =="
+            installed=false
+            for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
+              if docker run --rm --entrypoint python ${{ env.IMAGE_REF }} \
+                  -m pip install --prefix /tmp/probe-prefix "${plugin}==${accept}" > prefix.log 2>&1; then
+                cat prefix.log
+                grep -q 'Requirement already satisfied: tai42-contract' prefix.log || {
+                  echo "::error::the ${plugin} prefix install re-resolved the core instead of reusing it"
+                  exit 1
+                }
+                echo "marketplace prefix install of ${plugin} succeeded, core already satisfied"
+                installed=true
+                break
+              fi
               cat prefix.log
-              grep -q 'Requirement already satisfied: tai42-contract' prefix.log || {
-                echo "::error::the prefix install re-resolved the core instead of reusing it"
-                exit 1
-              }
-              echo "marketplace prefix install succeeded, core already satisfied"
-              exit 0
+              echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
+              if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
+                sleep "${PYPI_PROPAGATION_SLEEP}"
+              fi
+            done
+            if [ "${installed}" != true ]; then
+              echo "::error::the marketplace prefix install of ${plugin} did not succeed under the constraint after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
+              exit 1
             fi
-            cat prefix.log
-            echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
-            if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
-              sleep "${PYPI_PROPAGATION_SLEEP}"
-            fi
-          done
-          echo "::error::the marketplace prefix install did not succeed under the constraint after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
-          exit 1
+          done < "$RUNNER_TEMP/probe-versions.txt"
       # The shipped constraints file is derived from the venv at build; assert it
       # equals the release manifest's extras-stripped pins so a drift between what
       # the image holds and docker/pypi-requirements.txt reds here.

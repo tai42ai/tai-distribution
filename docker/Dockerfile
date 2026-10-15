@@ -146,7 +146,13 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 # fix included) instead of a snapshot cached from an earlier build; the cache
 # mount stays to save re-downloading wheels, not to serve stale metadata. The
 # msgpack/setuptools floors hold those transitive versions above the CVEs the
-# image vulnerability gate (HIGH, fixed-only) refuses; both venv flavors carry them.
+# image vulnerability gate (HIGH, fixed-only) refuses. The multidict<7 ceiling
+# holds that transitive on the 6.x line: the marketplace installs plugins with
+# `pip install --prefix`, which can only add packages beside this venv and never
+# replace one inside it, so a plugin's dependency closure must accept the versions
+# held here; the async AWS client library (aiobotocore) caps multidict below 7 at
+# every release while nothing in this image needs 7, so multidict is held on the
+# 6.x line to keep those plugins installable. Both venv flavors carry all three pins.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --refresh --no-sources \
       /src/contract \
@@ -161,7 +167,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/sandbox-docker \
       /src/sandbox-local \
       "msgpack>=1.2.1" \
-      "setuptools>=78.1.1"
+      "setuptools>=78.1.1" \
+      "multidict<7"
 
 # Release install: the first-party set comes from docker/pypi-requirements.txt,
 # which pins EACH package to its own version. Packages release independently, so
@@ -201,7 +208,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       if uv pip install --refresh --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
           -r /tmp/pypi-requirements.txt \
           "msgpack>=1.2.1" \
-          "setuptools>=78.1.1"; then \
+          "setuptools>=78.1.1" \
+          "multidict<7"; then \
         exit 0; \
       fi; \
       echo "install attempt $attempt failed; PyPI's index may still be propagating a fresh publish" >&2; \
