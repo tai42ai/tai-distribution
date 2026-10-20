@@ -305,9 +305,13 @@ the contract range the pinned tai-studio commit declares.
 contract range the studio commit in `docker/STUDIO_REF` declares (its
 `_SPEC["contract"]` marketplace-registry entry), and fails the release loudly —
 naming the version, the range and the commit, no image published — when the pin
-falls outside the range. When a platform release or a studio release moves one
-side first, the pins and the ref still land on `main`; the image is cut by the
-release that brings the two into range.
+falls outside the range. CI runs the same check on every pull request, so a pin
+and a studio ref outside each other's range never reach `main`. Both inputs are
+kept current by `.github/workflows/refresh-image-inputs.yml`: every platform
+release and every studio release recomputes the pins and the studio ref together
+from the newest release tags of both repositories
+(`scripts/refresh_image_inputs.py`) and proposes them as one pull request, so a
+platform release and the studio release that supports it merge as one change.
 
 To build and run the whole stack from source, layer the
 `docker-compose.local.yml` override on the base compose — it adds the same

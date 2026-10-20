@@ -186,7 +186,7 @@ FROM uv-base AS venv-pypi
 ARG VERSION
 # Propagation window for a freshly published first-party version, mirroring
 # .github/workflows/ci.yml's PYPI_PROPAGATION_ATTEMPTS/PYPI_PROPAGATION_SLEEP.
-# refresh-pins can open its PR seconds after the fleet publishes, before PyPI's
+# refresh-image-inputs can open its PR seconds after the fleet publishes, before PyPI's
 # index has propagated the new versions to every mirror; the resolve-manifest
 # job already retries across this window, and this install must too or a version
 # resolvable there is still invisible here.
