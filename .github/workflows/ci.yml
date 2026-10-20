@@ -19,7 +19,7 @@ env:
   # Local-only smoke tag. Built and scanned by `build-image`. Never pushed.
   IMAGE_REF: tai-ci:${{ github.sha }}
   # PyPI index propagation window for a freshly published first-party version.
-  # refresh-pins can open its PR seconds after the fleet publishes, before the
+  # refresh-image-inputs can open its PR seconds after the fleet publishes, before the
   # index has propagated the new versions everywhere. The manifest-resolve and
   # skeleton-install steps both retry across this window; the shared values keep
   # the two loops from drifting.
@@ -177,7 +177,7 @@ jobs:
         # Output to the runner temp dir, NOT /dev/null: uv writes the result via an
         # atomic temp file created NEXT TO the output path, and /dev is not writable
         # (Permission denied). We only care that resolution succeeds; the file is discarded.
-        # refresh-pins can open its PR seconds after the fleet publishes, before PyPI's
+        # refresh-image-inputs can open its PR seconds after the fleet publishes, before PyPI's
         # index has propagated the fresh versions everywhere ("No matching distribution
         # for tai42-...==X"). Retry so that transient propagation lag self-heals; a
         # genuinely unsatisfiable/self-contradicting manifest still reds within ~10 min
@@ -556,7 +556,7 @@ jobs:
           set -euo pipefail
           ver="$(grep -oP '^tai42-skeleton(\[[^]]*\])?==\K.*' docker/pypi-requirements.txt)"
           test -n "${ver}" || { echo "could not read tai42-skeleton pin from docker/pypi-requirements.txt" >&2; exit 1; }
-          # refresh-pins can open its PR seconds after the fleet publishes, before PyPI's
+          # refresh-image-inputs can open its PR seconds after the fleet publishes, before PyPI's
           # index has propagated tai42-skeleton==${ver} everywhere ("No matching
           # distribution"). Retry so that transient propagation lag self-heals; a
           # genuinely missing/unsatisfiable pin still reds within ~10 min (10 attempts,
@@ -595,10 +595,12 @@ jobs:
           STUDIO_REPO_URL: https://github.com/${{ github.repository_owner }}/tai-studio.git
         run: uv run --python 3.13 --with packaging python scripts/check_image_alignment.py --studio-repo "$STUDIO_REPO_URL"
 
-  # Unit-test the release alignment gate (scripts/check_image_alignment.py) on
-  # every PR so a regression in the gate is caught before it runs on a tag. The
-  # script needs `packaging`; uv supplies the pinned interpreter, pytest and
-  # packaging.
+  # Unit-test every script under scripts/ on every PR — among them the release
+  # alignment gate (scripts/check_image_alignment.py), so a regression in the gate
+  # is caught before it runs on a tag, and the image-input refresh
+  # (scripts/refresh_image_inputs.py), so a regression is caught before a release
+  # dispatch runs it. The gate needs `packaging`; uv supplies the pinned
+  # interpreter, pytest and packaging.
   alignment-script-tests:
     needs: reuse
     if: ${{ needs.reuse.outputs.should_skip != 'true' }}
@@ -606,5 +608,5 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - name: pytest the alignment gate script
+      - name: pytest the image scripts
         run: uv run --python 3.13 --with pytest --with packaging pytest scripts -q
