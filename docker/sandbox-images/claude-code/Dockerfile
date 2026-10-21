@@ -26,6 +26,12 @@ RUN echo "security-updates epoch: ${SECURITY_UPDATES_EPOCH}" \
  && apt-get upgrade -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
+# The base interpreter's pip vendors its own copies of several libraries (certifi
+# among them) at the version the base bundles, which can sit behind a published
+# fix the vulnerability gate refuses; hold pip at the release whose vendored
+# copies are current, the same floor the platform image's venv carries.
+RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2.2"
+
 # Non-root runtime user (uid 1000). The session never needs root.
 RUN groupadd --gid 1000 sandbox \
  && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin sandbox
