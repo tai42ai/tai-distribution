@@ -10,7 +10,7 @@
 # every other advisory still fail the gate. Re-check when the image's pip version
 # moves.
 #
-# The urllib3 entries carry an expiry: pip 26.2.1 (the latest release) vendors
+# The urllib3 entries carry an expiry: pip 26.2.2 (the latest release) vendors
 # urllib3 2.7.0, and no pip release yet vendors the fixed 2.8.0, so this cannot be
 # resolved by a version bump; the expiry forces the scan to refuse it again if a
 # fixed pip has not shipped by then.
@@ -29,7 +29,7 @@ vulnerabilities:
     statement: >-
       Accepted only for pip's vendored setuptools under pip/_vendor. The image's
       own setuptools is >= 78.1.1.
-  # pip's vendored urllib3 (pip 26.2.1 vendors 2.7.0); the image's own urllib3 is 2.8.0.
+  # pip's vendored urllib3 (pip 26.2.2 vendors 2.7.0); the image's own urllib3 is 2.8.0.
   - id: CVE-2026-97687
     purls:
       - pkg:pypi/urllib3@2.7.0
