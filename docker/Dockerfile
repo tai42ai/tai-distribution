@@ -149,13 +149,14 @@ COPY --from=siblings --exclude=.git --exclude=.venv --exclude=**/__pycache__ --e
 # image vulnerability gate (HIGH, fixed-only) refuses; the pip floor does the same
 # for the venv's pip, which ensurepip seeds at the version the base interpreter
 # bundles, so its vendored copies (certifi among them) are the current release's.
-# The multidict<7 ceiling holds that transitive on the 6.x line: the marketplace
-# installs plugins with `pip install --prefix`, which can only add packages beside
-# this venv and never replace one inside it, so a plugin's dependency closure must
-# accept the versions held here; the async AWS client library (aiobotocore) caps
-# multidict below 7 at every release while nothing in this image needs 7, so
-# multidict is held on the 6.x line to keep those plugins installable. Both venv
-# flavors carry all four pins.
+# The multidict<7 and python-dateutil<3 ceilings hold those transitives on the
+# lines plugins accept: the marketplace installs plugins with `pip install
+# --prefix`, which can only add packages beside this venv and never replace one
+# inside it, so a plugin's dependency closure must accept the versions held here.
+# The async AWS client library (aiobotocore) caps multidict below 7 and
+# python-dateutil below 3 at every release, while nothing in this image needs
+# either newer line, so both are held to keep those plugins installable. Both
+# venv flavors carry all five pins.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --refresh --no-sources \
       /src/contract \
@@ -172,7 +173,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       "msgpack>=1.2.1" \
       "setuptools>=78.1.1" \
       "pip>=26.2.2" \
-      "multidict<7"
+      "multidict<7" \
+      "python-dateutil<3"
 
 # Release install: the first-party set comes from docker/pypi-requirements.txt,
 # which pins EACH package to its own version. Packages release independently, so
@@ -206,7 +208,8 @@ COPY docker/pypi-requirements.txt /tmp/pypi-requirements.txt
 # publish waits instead of failing the build; a genuinely unsatisfiable pin still
 # reds. Wheels only, with the sdist-only carve-out for the three pure-Python
 # transitive deps (jinja2schema, odfpy, crontab) that publish no wheel. The
-# msgpack/setuptools/pip floors and the multidict ceiling match the dev install.
+# msgpack/setuptools/pip floors and the multidict and python-dateutil ceilings
+# match the dev install.
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -eu; \
     for attempt in $(seq 1 "$PYPI_PROPAGATION_ATTEMPTS"); do \
@@ -215,7 +218,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
           "msgpack>=1.2.1" \
           "setuptools>=78.1.1" \
           "pip>=26.2.2" \
-          "multidict<7"; then \
+          "multidict<7" \
+          "python-dateutil<3"; then \
         exit 0; \
       fi; \
       echo "install attempt $attempt failed; PyPI's index may still be propagating a fresh publish" >&2; \
