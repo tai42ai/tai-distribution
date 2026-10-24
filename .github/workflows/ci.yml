@@ -544,6 +544,26 @@ jobs:
               docker compose -f "${f}" --profile "${p}" config -q
             done < <(docker compose -f "${f}" config --profiles)
           done
+      # The agents checkpoint and store default to the stack's shared Redis and need its
+      # JSON and search commands. Start the bundle's own `redis` service alone and prove
+      # it answers both: `FT._LIST` must succeed and `JSON.SET` must reply OK. `-e` makes
+      # redis-cli exit non-zero on an error reply such as `unknown command`; without it
+      # redis-cli exits 0 whatever the server answers.
+      - name: bundle Redis serves the JSON and search commands
+        env:
+          # The compose file's only `${VAR:?}` guard; nothing connects to postgres here.
+          POSTGRES_PASSWORD: ci-validate-only
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f compose/docker-compose.yml)
+          trap '"${compose[@]}" down -v' EXIT
+          "${compose[@]}" up -d --wait redis
+          "${compose[@]}" exec -T redis redis-cli -e FT._LIST
+          reply="$("${compose[@]}" exec -T redis redis-cli -e JSON.SET ci-probe '$' '1')"
+          if [[ "${reply}" != "OK" ]]; then
+            echo "::error::JSON.SET on the bundle Redis replied '${reply}', expected OK"
+            exit 1
+          fi
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
