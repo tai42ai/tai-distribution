@@ -379,10 +379,11 @@ things in `compose/docker-compose.yml` make that safe:
   supervision shape so the platform detects compose deterministically, and
   **`TAI_SUPERVISED_PINNED_KEYS`** beside it declares the keys the deployment pins
   (a JSON list: every key of the anchor except the supervision pair). The platform
-  refuses a settings profile that changes a pinned key (it is re-injected from the
-  compose file on respawn, so a profile-carried change would silently revert) —
-  naming the manual step (edit the compose file, then recreate) instead of a
-  silent no-op. A supervised marker without the pinned list refuses boot, so keep
+  refuses a settings profile that changes a pinned key — the stored env overrides
+  the container env at every boot and reload, so a stored copy would shadow the
+  compose file's value on every restart and later edits to it there would silently
+  stop taking effect — naming the manual step (edit the compose file, then
+  recreate) instead. A supervised marker without the pinned list refuses boot, so keep
   the two together; `compose/tests/parity_app_env.py` checks the list against the
   anchor.
 - **`stop_grace_period: 300s`** on `serve` and `backend` gives each `>=` its
