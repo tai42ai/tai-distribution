@@ -48,8 +48,8 @@ packaging itself changes:
   the stack doesn't already ship): one opt-in compose profile for that service.
   The default stack never changes.
 
-The existing profiles follow exactly that rule: `celery` (RabbitMQ broker),
-`minio` (S3 backing), `agents-redis` (module-capable Redis) — each provides an
+The existing profiles follow exactly that rule: `celery` (RabbitMQ broker) and
+`minio` (S3 backing) — each provides an
 infra service for a plugin you add yourself, not the plugin itself.
 
 ## Naming

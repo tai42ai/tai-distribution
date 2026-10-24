@@ -349,7 +349,7 @@ required values (the stack refuses to start while any required secret is
 unset); create the config dir — `mkdir -p config && cp manifest.example.yml
 config/manifest.yml && touch config/.env`; then `docker compose up -d`. Optional
 profiles: `--profile celery` (RabbitMQ broker), `--profile minio` (S3
-storage), `--profile agents-redis` (module-capable Redis), `--profile monitoring`
+storage), `--profile monitoring`
 (the OpenTelemetry collector serve and backend export monitoring records to). The `celery` and
 `minio` profiles drive the celery backend and S3 storage plugins, which are not
 in the minimal image — add them via a derived image or a marketplace install
