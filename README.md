@@ -338,7 +338,7 @@ registry.
 docker/Dockerfile      multi-stage image (SOURCE=local | pypi)
 docker/STUDIO_REF      tai-studio commit SHA the release image builds from
 compose/               Docker Compose bundle (core stack + profiles)
-compose/langfuse/      standalone Langfuse stack (optional monitoring)
+compose/langfuse/      standalone Langfuse 4 stack (optional monitoring)
 .github/workflows/     release + CI
 ```
 
@@ -353,7 +353,7 @@ storage), `--profile monitoring`
 (the OpenTelemetry collector serve and backend export monitoring records to). The `celery` and
 `minio` profiles drive the celery backend and S3 storage plugins, which are not
 in the minimal image — add them via a derived image or a marketplace install
-first. Langfuse runs as its own stack from `compose/langfuse/` and likewise
+first. Langfuse 4 runs as its own stack from `compose/langfuse/` and likewise
 needs the monitoring plugin added. Its `langfuse-web` joins the core stack's
 `<project>_monitoring` network (`tai_monitoring` by default; `TAI_CORE_PROJECT` in
 `compose/langfuse/.env` names the core project), so bring the core stack up first;
@@ -366,6 +366,9 @@ with `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (the plugin's reads), and in
 owns the network: if it was taken `down` and up again while `langfuse-web` was
 stopped, that container refuses to start (`network … not found`); bring it back with
 `docker compose -f compose/langfuse/docker-compose.yml up -d --force-recreate langfuse-web`.
+Moving from a Langfuse 3.x stack: stop it and remove its volumes
+(`docker compose -f compose/langfuse/docker-compose.yml down --volumes`), then start
+this one. Nothing recorded under 3.x is carried over.
 
 ### Recycle and graceful shutdown
 

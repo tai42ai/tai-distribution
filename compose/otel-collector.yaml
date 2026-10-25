@@ -50,6 +50,10 @@ exporters:
     endpoint: ${env:LANGFUSE_HOST}/api/public/otel
     headers:
       Authorization: Basic ${env:OTEL_COLLECTOR_LANGFUSE_AUTH}
+      # Marks the batches as Langfuse 4 ingestion. A Langfuse that still writes both
+      # its old and new tables delays unmarked data on its v2 reads by up to about
+      # 10 minutes; a self-hosted Langfuse 4 on its defaults shows both at once.
+      x-langfuse-ingestion-version: "4"
     sending_queue:
       enabled: true
       storage: file_storage

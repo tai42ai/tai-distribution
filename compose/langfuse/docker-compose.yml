@@ -1,4 +1,8 @@
-# Standalone, optional Langfuse v3 stack for TAI self-hosting.
+# Standalone, optional Langfuse 4 stack for TAI self-hosting.
+#
+# Moving from a 3.x stack: stop it and remove its volumes
+# (`docker compose -f compose/langfuse/docker-compose.yml down --volumes`), then
+# start this one. Nothing recorded under 3.x is carried over.
 #
 # Langfuse is a SEPARATE, OPTIONAL dependency: its own Compose project, its own
 # network, and its own datastores (postgres / clickhouse / minio / redis) that
@@ -66,9 +70,9 @@ x-langfuse-common-env: &langfuse-common-env
 services:
   langfuse-web:
     <<: *service-defaults
-    # tag 3, pinned by digest so the Langfuse major cannot float across a pull.
-    # Refresh the digest when moving to a newer langfuse 3.x.
-    image: langfuse/langfuse:3@sha256:60a668b1dd06e2d9a034ba8b2ed5e84303e66c6202d76b288020059a755fd037
+    # tag 4, pinned by digest so the Langfuse major cannot float across a pull.
+    # Refresh the digest when moving to a newer langfuse 4.x.
+    image: docker.langfuse.com/langfuse/langfuse:4@sha256:8e2b58b5086bfc955452a12c72eb2306bf3cb2ec59de8115454514c4c8e36e33
     # Node app at Langfuse's stated minimum (4 GiB); cpu cap bounds it on a single
     # host. NODE_OPTIONS below lifts the V8 heap ceiling to the same size: Node
     # otherwise sizes its heap well under the cgroup limit and the server dies of
@@ -113,8 +117,8 @@ services:
       LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-TAI Admin}
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?set LANGFUSE_INIT_USER_PASSWORD in .env}
     healthcheck:
-      # python:3.13-slim-style trap avoided: the langfuse image is node-based and
-      # ships no curl/wget, so probe the public health endpoint with node itself.
+      # The langfuse image is node-based: probe the public health endpoint with
+      # node itself.
       test:
         - "CMD"
         - "node"
@@ -129,9 +133,9 @@ services:
 
   langfuse-worker:
     <<: *service-defaults
-    # tag 3, pinned by digest so the Langfuse major cannot float across a pull.
-    # Refresh the digest when moving to a newer langfuse 3.x.
-    image: langfuse/langfuse-worker:3@sha256:138a5b510cd76262a2abb02af1ddc563105013fdc9a62e63ccce526140ad05ba
+    # tag 4, pinned by digest so the Langfuse major cannot float across a pull.
+    # Refresh the digest when moving to a newer langfuse 4.x.
+    image: docker.langfuse.com/langfuse/langfuse-worker:4@sha256:a0ec08090953ad8d710565a23cda1b24e84dc889c9122e88df2c5b8ada4cfe1f
     # Ingestion worker is the memory-hungriest service; generous ceiling to avoid
     # OOM under real ingestion, cpu cap bounds it on a single host.
     mem_limit: 2048m
@@ -147,6 +151,18 @@ services:
         condition: service_healthy
     environment:
       <<: *langfuse-common-env
+    healthcheck:
+      # The worker binds HOSTNAME (the container's address), not localhost, so the
+      # probe asks that address, with node as the web probe does.
+      test:
+        - "CMD-SHELL"
+        - "node -e \"require('http').get('http://$${HOSTNAME}:3030/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      # Generous: on first boot the worker waits for the clickhouse migrations
+      # langfuse-web runs.
+      start_period: 120s
 
   postgres:
     <<: *service-defaults
@@ -168,7 +184,9 @@ services:
 
   clickhouse:
     <<: *service-defaults
-    image: clickhouse/clickhouse-server:24.8
+    # tag 26.4, pinned by digest so the ClickHouse release cannot float across a
+    # pull. Refresh the digest when moving to a newer 26.4 patch.
+    image: clickhouse/clickhouse-server:26.4@sha256:c7796a1335d14385c052f10061cf719f4a368a908432ec25980860b1333e9ccd
     # ClickHouse is memory-hungry; a generous ceiling avoids OOM under ingestion
     # while still bounding the host. Cpu cap bounds it on a single host.
     mem_limit: 4g
