@@ -66,6 +66,11 @@ x-langfuse-common-env: &langfuse-common-env
   LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:?set LANGFUSE_MINIO_ROOT_USER in .env}
   LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:?set LANGFUSE_MINIO_ROOT_PASSWORD in .env}
   LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  # Observation reads skip ClickHouse's FINAL merge for a project that ingests
+  # through the OpenTelemetry endpoint, which writes each observation once. The mark
+  # lives in Redis for 24 h after the project's last OTel call; web sets and reads
+  # it, the worker reads it (exports), so both carry the setting.
+  LANGFUSE_SKIP_FINAL_FOR_OTEL_PROJECTS: "true"
 
 services:
   langfuse-web:
@@ -102,7 +107,10 @@ services:
       # (one address on one network). 0.0.0.0 makes it answer on both networks
       # and on localhost, where the healthcheck below probes it.
       HOSTNAME: 0.0.0.0
-      NODE_OPTIONS: --max-old-space-size=4096
+      # The V8 heap is 3/4 of the 4g memory limit; the rest holds the process's
+      # non-heap memory, so a full heap fails with Node's out-of-memory error
+      # instead of a silent kernel kill.
+      NODE_OPTIONS: --max-old-space-size=3072
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set LANGFUSE_NEXTAUTH_SECRET in .env}
       # Headless bootstrap: creates the org / project / owner user and the API
@@ -136,9 +144,10 @@ services:
     # tag 4, pinned by digest so the Langfuse major cannot float across a pull.
     # Refresh the digest when moving to a newer langfuse 4.x.
     image: docker.langfuse.com/langfuse/langfuse-worker:4@sha256:a0ec08090953ad8d710565a23cda1b24e84dc889c9122e88df2c5b8ada4cfe1f
-    # Ingestion worker is the memory-hungriest service; generous ceiling to avoid
-    # OOM under real ingestion, cpu cap bounds it on a single host.
-    mem_limit: 2048m
+    # Ingestion worker at Langfuse's stated minimum (4 GiB); cpu cap bounds it on
+    # a single host. NODE_OPTIONS lifts the V8 heap ceiling to the same size, as
+    # on langfuse-web.
+    mem_limit: 4g
     cpus: 2.0
     depends_on:
       postgres:
@@ -151,6 +160,10 @@ services:
         condition: service_healthy
     environment:
       <<: *langfuse-common-env
+      # The V8 heap is 3/4 of the 4g memory limit; the rest holds the process's
+      # non-heap memory, so a full heap fails with Node's out-of-memory error
+      # instead of a silent kernel kill.
+      NODE_OPTIONS: --max-old-space-size=3072
     healthcheck:
       # The worker binds HOSTNAME (the container's address), not localhost, so the
       # probe asks that address, with node as the web probe does.
@@ -167,7 +180,8 @@ services:
   postgres:
     <<: *service-defaults
     image: postgres:16-alpine
-    mem_limit: 512m
+    # Langfuse's stated minimum.
+    mem_limit: 4g
     cpus: 1.0
     environment:
       POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-langfuse}
@@ -187,9 +201,9 @@ services:
     # tag 26.4, pinned by digest so the ClickHouse release cannot float across a
     # pull. Refresh the digest when moving to a newer 26.4 patch.
     image: clickhouse/clickhouse-server:26.4@sha256:c7796a1335d14385c052f10061cf719f4a368a908432ec25980860b1333e9ccd
-    # ClickHouse is memory-hungry; a generous ceiling avoids OOM under ingestion
-    # while still bounding the host. Cpu cap bounds it on a single host.
-    mem_limit: 4g
+    # Langfuse's stated minimum (8 GiB); ClickHouse sizes its own memory budget
+    # from this cgroup limit. Cpu cap bounds it on a single host.
+    mem_limit: 8g
     cpus: 2.0
     environment:
       CLICKHOUSE_DB: default
@@ -198,6 +212,7 @@ services:
     volumes:
       - langfuse-clickhouse-data:/var/lib/clickhouse
       - langfuse-clickhouse-logs:/var/log/clickhouse-server
+      - ./clickhouse/system-log-tables.xml:/etc/clickhouse-server/config.d/system-log-tables.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
       interval: 5s
@@ -208,7 +223,8 @@ services:
   minio:
     <<: *service-defaults
     image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
-    mem_limit: 512m
+    # Langfuse's stated minimum for self-hosted blob storage.
+    mem_limit: 4g
     cpus: 1.0
     # The event-upload bucket is created as a directory before MinIO starts (MinIO
     # serves each top-level directory of /data as a bucket); nothing else creates
@@ -231,9 +247,9 @@ services:
   redis:
     <<: *service-defaults
     image: redis:7-alpine
-    # noeviction queue; give headroom above the core redis so BullMQ jobs are not
-    # dropped, cpu cap bounds it on a single host.
-    mem_limit: 512m
+    # Langfuse's stated minimum (1.5 GiB) for its BullMQ queue; cpu cap bounds it
+    # on a single host.
+    mem_limit: 1536m
     cpus: 0.5
     # requirepass is read from the container env at runtime so the literal
     # password never lands in the rendered compose config / `docker inspect`.
@@ -243,7 +259,7 @@ services:
     # instead of the cgroup OOM-killing the container.
     environment:
       REDIS_PASSWORD: ${LANGFUSE_REDIS_PASSWORD:?set LANGFUSE_REDIS_PASSWORD in .env}
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 448mb --maxmemory-policy noeviction"]
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 1344mb --maxmemory-policy noeviction"]
     volumes:
       - langfuse-redis-data:/data
     healthcheck:
