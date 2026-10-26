@@ -33,7 +33,7 @@ $ docker compose up -d
 
 ## Configuration
 
-`/app` is the config dir (and `WORKDIR`): mount your `.env` and `manifest.yml` there. `TAI_CONFIG_DIR_PATH` moves the dir; `TAI_MANIFEST_PATH` moves the manifest file alone. The serve port defaults to `8000` (`--port`, or the `APP_ARGS_PORT` env var); the image `HEALTHCHECK` probes `:8000/health`.
+`/app` is the config dir (and `WORKDIR`): mount your `.env` and `manifest.yml` there. The image runs as uid 1000 and writes the config dir (the settings it saves, its write locks), so a mounted directory must be writable by that uid: the Compose bundle hands it over with its `config-init` one-shot; with a bare `docker run`, mount a directory uid 1000 already owns. `TAI_CONFIG_DIR_PATH` moves the dir; `TAI_MANIFEST_PATH` moves the manifest file alone. The serve port defaults to `8000` (`--port`, or the `APP_ARGS_PORT` env var); the image `HEALTHCHECK` probes `:8000/health`.
 
 ## Where to store data
 

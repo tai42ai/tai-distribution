@@ -2,9 +2,9 @@
 #
 # Builds the image from local checkouts (SOURCE=local) instead of
 # pulling the released image, so a contributor can run the full stack against
-# uncommitted local changes. Every app process (db-migrate / serve / backend /
-# metrics) shares one build definition, so they can never build from different
-# source.
+# uncommitted local changes. Every service on the app image (config-init /
+# db-migrate / serve / backend / metrics) shares one build definition, so they can
+# never build from different source.
 #
 # Requires the `tai42/` monorepo and the `tai-studio` repo cloned beside
 # `tai-distribution`; the directory holding them is the `siblings` build context
@@ -33,6 +33,8 @@ x-tai-build: &tai-build
     SOURCE: local
 
 services:
+  config-init:
+    build: *tai-build
   db-migrate:
     build: *tai-build
   serve:

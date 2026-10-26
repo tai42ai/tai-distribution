@@ -14,7 +14,11 @@
 # automatically for ${VAR} substitution below. `config/` is bind-mounted at /app
 # and holds the app's `manifest.yml` (the file config provider's input); it may
 # also hold an optional `.env` the app loads itself. Both `.env` and `config/`
-# are git-ignored so a filled-in deployment can never be committed.
+# are git-ignored so a filled-in deployment can never be committed. The app
+# writes its saved settings back into `config/` (`.env`, `manifest.yml`, the
+# write locks), so the `config-init` one-shot hands the directory to the image's
+# user (uid 1000) at every `up`; reading or editing those files by hand on the
+# host afterwards takes that uid.
 #
 # Datastores are NOT host-published — only serve's HTTP port is. Reach postgres
 # and redis over the compose network (hostnames `postgres` / `redis`).
@@ -212,6 +216,23 @@ x-tai-app-env: &tai-app-env
   TAI_AGENTS_CLAUDE_OAUTH_TOKEN:
 
 services:
+  # ---- config-init: hands config/ to the app's user ------------------------
+  # The image runs as `tai` (uid 1000) and writes the config dir: settings saved
+  # through the API or Studio land in `.env` and `manifest.yml`, beside the write
+  # locks. The bind-mounted host directory belongs to whoever created it, so it is
+  # handed to the image's user before any app process starts. A failed chown fails
+  # this one-shot, and the services that wait on it never start.
+  config-init:
+    image: *tai-image
+    logging: *default-logging
+    mem_limit: 64m
+    cpus: 0.5
+    user: "0:0"
+    entrypoint: ["chown", "-R", "tai:tai", "/app"]
+    volumes:
+      - ./config:/app
+    restart: "no"
+
   # ---- db-migrate: one-shot migration runner -------------------------------
   # Runs the app's pending migrations (ordered chain, each applied once and
   # recorded in tai_schema_history) through the "default" database's admin
@@ -316,6 +337,8 @@ services:
         condition: service_healthy
       db-migrate:
         condition: service_completed_successfully
+      config-init:
+        condition: service_completed_successfully
       sandbox-engine:
         condition: service_healthy
         required: false
@@ -402,6 +425,8 @@ services:
         condition: service_healthy
       db-migrate:
         condition: service_completed_successfully
+      config-init:
+        condition: service_completed_successfully
       sandbox-engine:
         condition: service_healthy
         required: false
@@ -443,6 +468,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      config-init:
+        condition: service_completed_successfully
     # The metrics server DOES listen on HTTP, but on the metrics port — not
     # serve's :8000 — so the baked probe would ride the wrong port. Probe
     # :8012/metrics.
@@ -856,7 +883,7 @@ services:
 
 # The default datastore network, now declared EXPLICITLY so the sandbox control
 # network can sit alongside it. Services with no `networks:` key still ride
-# `default` (postgres/redis/metrics/minio/rabbitmq/db-migrate).
+# `default` (postgres/redis/metrics/minio/rabbitmq/db-migrate/config-init).
 networks:
   default:
   # Server-side sandbox control path (§ sandbox-ctrl): ONLY
