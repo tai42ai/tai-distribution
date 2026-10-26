@@ -19,10 +19,10 @@ env:
   # Local-only smoke tag. Built and scanned by `build-image`. Never pushed.
   IMAGE_REF: tai-ci:${{ github.sha }}
   # PyPI index propagation window for a freshly published first-party version.
-  # refresh-image-inputs can open its PR seconds after the fleet publishes, before the
-  # index has propagated the new versions everywhere. The manifest-resolve and
-  # skeleton-install steps both retry across this window; the shared values keep
-  # the two loops from drifting.
+  # refresh-image-inputs can open its PR seconds after the first-party packages publish,
+  # before the index has propagated the new versions everywhere. The manifest-resolve step, the
+  # image build (through its build arguments) and the constraint probes all retry
+  # across this window; the shared values keep those loops from drifting.
   PYPI_PROPAGATION_ATTEMPTS: '10'
   PYPI_PROPAGATION_SLEEP: '60'
   # Marketplace plugins the three constraint probes install. Space-separated so a
@@ -589,34 +589,6 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check pyyaml
           python compose/tests/env_example_keys.py
-      # Compose pinned-set parity: assert the x-tai-app-env anchor keys equal the
-      # anchor's declared TAI_SUPERVISED_PINNED_KEYS list. Installs tai42-skeleton at
-      # the version the shipped image pins (docker/pypi-requirements.txt) so the test
-      # can import config.recycle_policy — no image extras needed, the import is core only.
-      - name: compose env-anchor refusal parity
-        run: |
-          set -euo pipefail
-          ver="$(grep -oP '^tai42-skeleton(\[[^]]*\])?==\K.*' docker/pypi-requirements.txt)"
-          test -n "${ver}" || { echo "could not read tai42-skeleton pin from docker/pypi-requirements.txt" >&2; exit 1; }
-          # refresh-image-inputs can open its PR seconds after the fleet publishes, before PyPI's
-          # index has propagated tai42-skeleton==${ver} everywhere ("No matching
-          # distribution"). Retry so that transient propagation lag self-heals; a
-          # genuinely missing/unsatisfiable pin still reds within ~10 min (10 attempts,
-          # 60s apart). --no-cache-dir makes every attempt re-fetch the simple index
-          # instead of replaying a listing pip cached before the publish landed.
-          for attempt in $(seq 1 "${PYPI_PROPAGATION_ATTEMPTS}"); do
-            if python -m pip install --disable-pip-version-check --no-cache-dir "tai42-skeleton==${ver}" pyyaml; then
-              break
-            fi
-            echo "install attempt ${attempt} failed; PyPI's index may still be propagating a fresh publish"
-            if [ "${attempt}" -lt "${PYPI_PROPAGATION_ATTEMPTS}" ]; then
-              sleep "${PYPI_PROPAGATION_SLEEP}"
-            else
-              echo "::error::tai42-skeleton==${ver} did not install after ${PYPI_PROPAGATION_ATTEMPTS} attempts"
-              exit 1
-            fi
-          done
-          python compose/tests/parity_app_env.py
 
   # Image-input agreement gate, the same checks release.yml runs at the tag:
   # the pinned tai42-contract version in docker/pypi-requirements.txt must lie

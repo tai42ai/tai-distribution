@@ -87,9 +87,9 @@ docker compose exec serve tai setup
 
 `tai setup` drives the public `POST /api/setup` door: it creates the owner
 principal and prints the owner's key **once** — copy it then, it is not shown
-again. Gate the door with a token: set `TAI_SETUP_TOKEN` in `.env` to pin your
-own, or leave it unset and the server mints a one-time token and logs it once at
-startup (read it from the `serve` log). Setup is one-shot — once the owner
+again. Gate the door with a token: set `TAI_SETUP_TOKEN` in `config/.env` to pin
+your own, or leave it unset and the server mints a one-time token and logs it once
+at startup (read it from the `serve` log). Setup is one-shot — once the owner
 principal exists the door answers `409` and mints nothing more, and every later
 key is minted by the owner.
 
@@ -234,7 +234,7 @@ Both are **consumed by digest, never by a bare tag** — every reference is the
 verification:
 
 ```sh
-# In .env / the manifest — pin the exact digest, not a moving tag:
+# In config/.env (or saved from the admin UI) — pin the exact digest, not a moving tag:
 TAI_AGENTS_CLAUDE_SESSION_IMAGE=docker.io/tai42/tai-sandbox-claude-code@sha256:<digest>
 ```
 
@@ -414,25 +414,41 @@ Moving from a Langfuse 3.x stack: stop it and remove its volumes
 (`docker compose -f compose/langfuse/docker-compose.yml down --volumes`), then start
 this one. Nothing recorded under 3.x is carried over.
 
+### Deployment settings and admin settings
+
+A setting whose value is in the container environment when the app starts
+belongs to the deployment. On boot and on every reload that value wins over any
+copy the app has stored, the admin UI shows the setting locked, and the app
+refuses a save that sets it. In this bundle that covers every key of the shared
+`x-tai-app-env` anchor in `compose/docker-compose.yml` and of each app service's
+own `environment:` entries that is set to a non-empty value, and the ENV the
+image sets; a key the compose file leaves empty (such as an unset
+`${SANDBOX_DOCKER_HOST:-}`) is not the deployment's. A key set in only one
+service's `environment:` is still the deployment's for every service: no service
+applies a stored copy of it, and a service the compose file does not give the
+value runs its default. Change one by editing the compose file (or the `.env` it
+substitutes from) and recreating the containers.
+
+Every other setting is the admin's: the app stores it in `config/.env`, and the
+admin changes it through the app (the UI or the API). A setting an admin should
+edit from the UI must therefore not be set in the compose file.
+
 ### Recycle and graceful shutdown
 
-Process-identity settings (broker/bus URLs, config mode, worker counts) cannot
-change in-process. A profile apply that touches one runs an orchestrated rolling
-**recycle**: the process drains its current work, exits cleanly, and Compose's
-`restart: unless-stopped` respawns it, which reloads the new env from `.env`. Two
+Some settings cannot change in-process: each declares that a change needs a
+fresh process (its `recycle` reload class, for example
+`TAI_AGENTS_CLAUDE_CRASH_RESUME` or a plugin field declared `"reload": "recycle"`).
+The bus URLs and the config mode are never saved through the app at all: in this
+bundle the compose file sets them, so they change only by editing it and
+recreating the containers. A saved change that touches a recycle-class setting
+runs an orchestrated rolling **recycle**: the process drains its current work
+and exits cleanly, and its supervisor starts it again, which loads the new
+settings. The app needs a supervisor that restarts it on exit; without one, a
+recycled process stays stopped and the recycle reports it as stopped. Two
 things in `compose/docker-compose.yml` make that safe:
 
-- **`TAI_SUPERVISED: compose`** in the shared `x-tai-app-env` anchor marks the
-  supervision shape so the platform detects compose deterministically, and
-  **`TAI_SUPERVISED_PINNED_KEYS`** beside it declares the keys the deployment pins
-  (a JSON list: every key of the anchor except the supervision pair). The platform
-  refuses a settings profile that changes a pinned key — the stored env overrides
-  the container env at every boot and reload, so a stored copy would shadow the
-  compose file's value on every restart and later edits to it there would silently
-  stop taking effect — naming the manual step (edit the compose file, then
-  recreate) instead. A supervised marker without the pinned list refuses boot, so keep
-  the two together; `compose/tests/parity_app_env.py` checks the list against the
-  anchor.
+- **`restart: unless-stopped`** on `serve`, `backend` and `metrics` is the
+  supervisor: Compose starts each process again when it exits.
 - **`stop_grace_period: 300s`** on `serve` and `backend` gives each `>=` its
   in-flight drain budget (uvicorn request drain; arq `job_completion_wait` /
   celery warm-drain) before Compose sends SIGKILL, so a recycle or a plain
