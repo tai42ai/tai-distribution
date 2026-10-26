@@ -10,7 +10,9 @@ pins every first-party `tai42-*` package.
 - **One version story.** A distribution tag (`X.Y.Z`) pins the `tai42-*` packages
   at a matching release; keep the image and compose bundle in lockstep.
 - **Release builds pull from PyPI.** The release image installs `tai42-*` from
-  PyPI and fetches tai-studio at the SHA in `docker/STUDIO_REF`. Only the dev
+  PyPI and fetches tai-studio at the SHA in `docker/STUDIO_REF`; it records the
+  tai42-e2e suite tag in `docker/E2E_REF` as its `ai.tai42.e2e.ref` label, and
+  that suite must pass against each arch before it is pushed. Only the dev
   build (`SOURCE=local`) uses local checkouts — the `tai42` monorepo and the
   `tai-studio` repo — and it MUST run on a local builder — its context is the
   directory holding those checkouts, which may hold untracked secrets.
@@ -21,6 +23,10 @@ pins every first-party `tai42-*` package.
 
 - `docker/Dockerfile` — multi-stage image (`SOURCE=local | pypi`)
 - `docker/STUDIO_REF` — tai-studio commit SHA the release image builds from
+- `docker/E2E_REF` — tai42-e2e suite tag the e2e gate runs and the image's
+  `ai.tai42.e2e.ref` label records
+- `.github/actions/e2e-gate/` — the e2e gate the release and CI run against the
+  built image
 - `compose/` — Docker Compose bundles
 - `.github/workflows/` — release + CI
 

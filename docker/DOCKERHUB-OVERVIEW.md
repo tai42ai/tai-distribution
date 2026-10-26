@@ -60,6 +60,14 @@ See [Add plugins](https://docs.tai42.ai/operate#add-plugins).
 
 Distribution semver — `X.Y.Z`, `X.Y`, `X`, and `latest`. Each tag pins the first-party `tai42-*` packages at a matching release, so one version story covers the whole image.
 
+## Labels
+
+Every image the release pipeline publishes carries `ai.tai42.e2e.ref`: the `tai42-e2e-v<X>.<Y>.<Z>` release tag of the end-to-end suite that ran and passed against that image, on its own arch, before it was published. The release pipeline sets it, for stable and prerelease releases alike. Before publishing, the image boots through the Compose bundle with the auth gate on, and the suite at that tag runs against it; every test a running deployment can serve ran and none failed. Images published before the pipeline set this label carry none.
+
+```console
+$ docker image inspect --format '{{ index .Config.Labels "ai.tai42.e2e.ref" }}' docker.io/tai42/tai:latest
+```
+
 ## License
 
 Apache-2.0. The full source of the image build lives in [tai42ai/tai-distribution](https://github.com/tai42ai/tai-distribution).

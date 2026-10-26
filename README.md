@@ -42,6 +42,30 @@ docker run --rm docker.io/tai42/tai:latest doctor
 Distribution semver — `X.Y.Z`, `X.Y`, `X`, and `latest`. Each tag pins the
 `tai42-*` packages at a matching release.
 
+### Labels
+
+Besides the `org.opencontainers.image.*` labels, every platform image the
+release pipeline publishes carries `ai.tai42.e2e.ref`: the
+`tai42-e2e-v<X>.<Y>.<Z>` release tag of the end-to-end suite that ran and passed
+against that image before it was published. The pipeline sets it on every arch,
+for stable and prerelease releases alike; the release build refuses to start
+without it. Images published before the pipeline set this label carry none.
+Read it from a local image or from the registry:
+
+```sh
+docker image inspect --format '{{ index .Config.Labels "ai.tai42.e2e.ref" }}' docker.io/tai42/tai:latest
+docker buildx imagetools inspect docker.io/tai42/tai:latest --format '{{json .Image}}'
+```
+
+"Passed" means: the image booted through this repository's Compose bundle with
+the auth gate on, the owner key was minted through the setup door, and the
+suite at that tag ran in target mode against it — every test the target can
+serve ran, none failed, and at least one ran. Tests the image cannot serve as
+shipped — plugin kinds the minimal core does not bake, the suite's probe tools,
+or control of a stack the suite builds itself — are skipped there with their
+unmet need as the reason; the run's junit report is attached to the workflow
+run.
+
 ### Config
 
 `/app` is the config dir (and `WORKDIR`): mount your `.env` and `manifest.yml`
@@ -285,7 +309,11 @@ update availability.
 ## Building locally
 
 Release builds pull `tai42-*` from PyPI and fetch tai-studio at the commit SHA
-recorded in `docker/STUDIO_REF`. A dev build instead uses your local checkouts:
+recorded in `docker/STUDIO_REF`, and take the `E2E_REF` build-arg — the
+tai42-e2e suite tag in `docker/E2E_REF`, which the image records as its
+`ai.tai42.e2e.ref` label (see [Labels](#labels)); a release build refuses an
+empty one. A dev build runs no suite, so its label is empty. It instead uses
+your local checkouts:
 the `tai42/` monorepo (platform members at `core/{contract,kit,cli,skeleton}` +
 `plugins/*`) and the `tai-studio` repo, both cloned beside this one. Because the
 siblings context is the directory holding those checkouts — which may hold
@@ -312,6 +340,16 @@ release and every studio release recomputes the pins and the studio ref together
 from the newest release tags of both repositories
 (`scripts/refresh_image_inputs.py`) and proposes them as one pull request, so a
 platform release and the studio release that supports it merge as one change.
+The same refresh keeps `docker/E2E_REF` on the newest stable tai42-e2e release
+tag, and the alignment check also fails when that tag is not one the monorepo
+serves.
+
+Before a release pushes an arch of the platform image, the e2e gate
+(`.github/actions/e2e-gate`) runs the suite the image's label names against the
+scanned image on that arch's native runner; a failed test, or a run in which no
+test ran (`scripts/check_e2e_gate_report.py`), stops the push. CI runs the same
+gate on the amd64 smoke image of every pull request that builds one (a pull
+request that only bumps versions builds no image).
 
 To build and run the whole stack from source, layer the
 `docker-compose.local.yml` override on the base compose — it adds the same
@@ -337,8 +375,10 @@ registry.
 ```
 docker/Dockerfile      multi-stage image (SOURCE=local | pypi)
 docker/STUDIO_REF      tai-studio commit SHA the release image builds from
+docker/E2E_REF         tai42-e2e suite tag the e2e gate runs; the image's ai.tai42.e2e.ref label
 compose/               Docker Compose bundle (core stack + profiles)
 compose/langfuse/      standalone Langfuse 4 stack (optional monitoring)
+.github/actions/       the e2e gate (composite action) the release and CI run
 .github/workflows/     release + CI
 ```
 

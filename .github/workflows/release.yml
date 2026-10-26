@@ -13,12 +13,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Contract-range agreement gate, ahead of every build leg: the pinned
+  # Image-input agreement gate, ahead of every build leg: the pinned
   # tai42-contract version in docker/pypi-requirements.txt must lie inside the
   # contract range the pinned studio commit (docker/STUDIO_REF) declares, else the
-  # served SPA speaks a contract the running platform does not. A red here starts
-  # no build, so nothing is scanned, pushed, signed or released while the two
-  # sides disagree.
+  # served SPA speaks a contract the running platform does not; and the e2e suite
+  # tag in docker/E2E_REF must be a tai42-e2e release tag the suite repository
+  # serves, else the build leg's e2e gate could not check the suite out. A red
+  # here starts no build, so nothing is scanned, pushed, signed or released.
   alignment:
     runs-on: ubuntu-24.04
     permissions:
@@ -30,17 +31,25 @@ jobs:
         env:
           STUDIO_REPO_URL: https://github.com/${{ github.repository_owner }}/tai-studio.git
         run: uv run --python 3.13 --with packaging python scripts/check_image_alignment.py --studio-repo "$STUDIO_REPO_URL"
+      - name: Pinned e2e suite tag exists in the suite repository
+        env:
+          SUITE_REPO_URL: https://github.com/${{ github.repository_owner }}/tai42.git
+        run: python3 scripts/check_e2e_ref.py --suite-repo "$SUITE_REPO_URL"
 
   # Per-arch build on native runners (NOT QEMU), fanned out over the image list:
   # the platform image plus the two pinned session images. Each leg builds its
   # image, scans it, and — only if the scan passes — pushes it to GHCR BY DIGEST
-  # (no tag). The merge job assembles the multi-arch manifest lists from these
-  # digests. A bare matrix push to a shared tag would overwrite the tag with a
+  # (no tag). The platform leg also runs the e2e gate between the scan and the
+  # push: the scanned image boots through the shipped compose bundle and the
+  # tai42-e2e suite its `ai.tai42.e2e.ref` label names runs against it
+  # (.github/actions/e2e-gate), so every published arch carries the tag of a
+  # suite that passed on it. The merge job assembles the multi-arch manifest
+  # lists from these digests. A bare matrix push to a shared tag would overwrite the tag with a
   # single-arch image, hence split-and-merge.
   #
   # The session images are self-contained (base + pip install / base-only), so
-  # they build from their own context with NO SOURCE/STUDIO_REF build-args; only
-  # the platform image carries them.
+  # they build from their own context with NO SOURCE/STUDIO_REF/E2E_REF
+  # build-args; only the platform image carries them.
   build:
     needs: alignment
     strategy:
@@ -83,6 +92,9 @@ jobs:
       - name: Read STUDIO_REF
         id: studio
         run: echo "ref=$(cat docker/STUDIO_REF)" >> "$GITHUB_OUTPUT"
+      - name: Read E2E_REF
+        id: e2e
+        run: echo "ref=$(cat docker/E2E_REF)" >> "$GITHUB_OUTPUT"
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -92,7 +104,7 @@ jobs:
       # Every image consumes SECURITY_UPDATES_EPOCH (it busts the security-update
       # layer's cache so the scanned-and-pushed image always carries the latest
       # Debian uploads); only the platform image also consumes
-      # SOURCE/VERSION/STUDIO_REF, the session images build from base + pip
+      # SOURCE/VERSION/STUDIO_REF/E2E_REF, the session images build from base + pip
       # install. Assemble the build-args once so the two build steps below stay
       # identical across the image list — the shared value also keeps the scanned
       # bits and the pushed bits the same layer.
@@ -102,6 +114,7 @@ jobs:
           PLATFORM_ARGS: ${{ matrix.image.platform_build_args }}
           VERSION: ${{ steps.ver.outputs.version }}
           STUDIO_REF: ${{ steps.studio.outputs.ref }}
+          E2E_REF: ${{ steps.e2e.outputs.ref }}
           SECURITY_UPDATES_EPOCH: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
@@ -112,6 +125,7 @@ jobs:
               echo "SOURCE=pypi"
               echo "VERSION=${VERSION}"
               echo "STUDIO_REF=${STUDIO_REF}"
+              echo "E2E_REF=${E2E_REF}"
             fi
             echo "__EOF__"
           } >> "$GITHUB_OUTPUT"
@@ -142,6 +156,17 @@ jobs:
           severity: CRITICAL,HIGH
           vuln-type: os,library
           trivyignores: .trivyignore.yaml
+      # Gate: the tai42-e2e suite the image's label names passes against the
+      # scanned image on this arch. The push below rebuilds from the same cache
+      # with the same build-args, so the pushed image is the one tested.
+      - name: e2e gate (before push)
+        if: ${{ matrix.image.platform_build_args }}
+        uses: ./.github/actions/e2e-gate
+        with:
+          image: tai-scan-${{ matrix.image.key }}:${{ matrix.arch }}
+          suite-repo-url: https://github.com/${{ github.repository_owner }}/tai42.git
+          project-name: e2e-gate-${{ matrix.arch }}
+          report-name: e2e-gate-junit-${{ matrix.arch }}
       - name: Build and push by digest to GHCR
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
