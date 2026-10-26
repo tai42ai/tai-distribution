@@ -1,0 +1,241 @@
+# The e2e gate: boot a locally built platform image with the shipped compose
+# bundle and run the tai42-e2e suite against it in target mode.
+#
+# The suite tag is read from the image's own `ai.tai42.e2e.ref` label, so the
+# suite that runs is, by construction, the one the label names; a label that is
+# not a stable tai42-e2e release tag present in the suite repository fails
+# before anything boots (scripts/check_e2e_ref.py).
+#
+# The stack is the documented production first run: the bundle's
+# docker-compose.yml with the auth gate on, the example manifest plus the redis
+# identity provider, and the owner key minted once through the public
+# `POST /api/setup` door with a generated setup token. The config dir is created
+# by the runner's user and handed to the image's user by the bundle itself, so
+# the gate proves the first run on a host whose user is not the image's uid. The image is tagged as
+# the image reference the bundle resolves for its app services (with a
+# gate-only TAI_VERSION, a local tag only), so compose runs the exact bits under
+# test and pulls nothing for them.
+#
+# The suite runs from a checkout at the tag with its locked environment. The
+# target declares `mutable` (the stack is throwaway) and not `probe-tools` (the
+# probe tools ship with the suite, not in the image); every test the target
+# cannot serve is skipped with its unmet need as the reason. The gate passes
+# only when pytest passes and at least one test ran
+# (scripts/check_e2e_gate_report.py).
+#
+# The compose project is named by `project-name`, so the gate never touches
+# another stack on the same host; it is torn down with its volumes, and the
+# local image tag removed, whatever the outcome. On a failure the stack's logs
+# are dumped before teardown.
+name: e2e-gate
+description: Run the tai42-e2e suite named by the image's ai.tai42.e2e.ref label against the image.
+
+inputs:
+  image:
+    description: Local reference of the platform image under test.
+    required: true
+  suite-repo-url:
+    description: Git URL of the repository that carries the tai42-e2e suite and its tags.
+    required: true
+  project-name:
+    description: Compose project name for the gate's stack; unique on the host.
+    required: true
+  serve-port:
+    description: Host port the gate's serve container publishes.
+    required: false
+    default: '8000'
+  report-name:
+    description: Artifact name for the suite's junit report.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Read the suite tag the image carries and check it exists
+      id: label
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        SUITE_REPO_URL: ${{ inputs.suite-repo-url }}
+        PROJECT: ${{ inputs.project-name }}
+      run: |
+        set -euo pipefail
+        repo_root="$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)"
+        scratch="${RUNNER_TEMP}/e2e-gate-${PROJECT}"
+        if [ -e "${scratch}" ]; then
+          echo "::error::${scratch} already exists; the gate needs a fresh scratch directory"
+          exit 1
+        fi
+        mkdir -p "${scratch}"
+        ref="$(docker image inspect --format '{{ index .Config.Labels "ai.tai42.e2e.ref" }}' "${IMAGE}")"
+        python3 "${repo_root}/scripts/check_e2e_ref.py" --ref "${ref}" --suite-repo "${SUITE_REPO_URL}"
+        {
+          echo "ref=${ref}"
+          echo "repo-root=${repo_root}"
+          echo "scratch=${scratch}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Check the suite out at the tag
+      shell: bash
+      env:
+        SUITE_REPO_URL: ${{ inputs.suite-repo-url }}
+        E2E_REF: ${{ steps.label.outputs.ref }}
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+      run: |
+        set -euo pipefail
+        suite="${SCRATCH}/suite"
+        git init -q "${suite}"
+        git -C "${suite}" fetch -q --depth 1 "${SUITE_REPO_URL}" "refs/tags/${E2E_REF}:refs/tags/${E2E_REF}"
+        git -C "${suite}" -c advice.detachedHead=false checkout -q "refs/tags/${E2E_REF}"
+        echo "suite checked out at ${E2E_REF} ($(git -C "${suite}" rev-parse HEAD))"
+
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+    - name: Sync the suite's locked environment
+      shell: bash
+      working-directory: ${{ steps.label.outputs.scratch }}/suite
+      run: |
+        set -euo pipefail
+        uv python install 3.13
+        uv sync --locked --package tai42-e2e
+
+    - name: Boot the image with the shipped compose bundle
+      id: boot
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        PROJECT: ${{ inputs.project-name }}
+        SERVE_PORT: ${{ inputs.serve-port }}
+        REPO_ROOT: ${{ steps.label.outputs.repo-root }}
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+      run: |
+        set -euo pipefail
+        bundle="${SCRATCH}/compose"
+        # The tracked bundle only: a local deployment's .env and config/ stay out.
+        tar -C "${REPO_ROOT}" --exclude=compose/.env --exclude=compose/config -cf - compose \
+          | tar -C "${SCRATCH}" -xf -
+        if grep -Eq '^lifecycle_modules:' "${bundle}/manifest.example.yml"; then
+          echo "::error::manifest.example.yml already declares lifecycle_modules; the gate's identity provider block would duplicate it"
+          exit 1
+        fi
+        # The config dir is created by the runner's own user, as the quickstart
+        # does; the bundle's config-init hands it to the image's user at `up`.
+        mkdir "${bundle}/config"
+        {
+          cat "${bundle}/manifest.example.yml"
+          printf '\nlifecycle_modules:\n  - tai42_identity_redis.redis_api_key_provider\n'
+        } > "${bundle}/config/manifest.yml"
+        setup_token="$(openssl rand -hex 24)"
+        echo "::add-mask::${setup_token}"
+        # The gate keeps its own copy: once the stack owns config/, the runner
+        # reads nothing inside it.
+        (umask 077 && printf '%s' "${setup_token}" > "${SCRATCH}/setup-token")
+        # App settings: the config dir's .env is the app's own config file.
+        printf 'TAI_SETUP_TOKEN=%s\n' "${setup_token}" > "${bundle}/config/.env"
+        # Compose interpolation.
+        version="e2e-gate-${PROJECT}"
+        {
+          echo "TAI_VERSION=${version}"
+          echo "TAI_SERVE_PORT=${SERVE_PORT}"
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+          echo "ACCESS_CONTROL_ENABLE=true"
+        } > "${bundle}/.env"
+        image_tag="$(docker compose -p "${PROJECT}" -f "${bundle}/docker-compose.yml" config --format json \
+          | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["serve"]["image"])')"
+        case "${image_tag}" in
+          *":${version}") ;;
+          *)
+            echo "::error::the bundle's serve image ${image_tag} does not take its tag from TAI_VERSION"
+            exit 1
+            ;;
+        esac
+        docker tag "${IMAGE}" "${image_tag}"
+        echo "image-tag=${image_tag}" >> "$GITHUB_OUTPUT"
+        docker compose -p "${PROJECT}" -f "${bundle}/docker-compose.yml" up -d --wait --wait-timeout 600
+
+    - name: Mint the owner key through the setup door
+      shell: bash
+      env:
+        SERVE_PORT: ${{ inputs.serve-port }}
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+      run: |
+        set -euo pipefail
+        setup_token="$(cat "${SCRATCH}/setup-token")"
+        body="$(python3 -c 'import json, sys; print(json.dumps({"setup_token": sys.argv[1], "owner_display_name": "e2e gate owner"}))' "${setup_token}")"
+        status="$(curl -sS -o "${SCRATCH}/setup-response.json" -w '%{http_code}' \
+          -X POST -H 'Content-Type: application/json' --data "${body}" \
+          "http://127.0.0.1:${SERVE_PORT}/api/setup")"
+        if [ "${status}" != "200" ]; then
+          echo "::error::POST /api/setup answered ${status}: $(cat "${SCRATCH}/setup-response.json")"
+          exit 1
+        fi
+        key="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["data"]["api_key"])' "${SCRATCH}/setup-response.json")"
+        echo "::add-mask::${key}"
+        rm "${SCRATCH}/setup-response.json"
+        (umask 077 && printf '%s' "${key}" > "${SCRATCH}/key")
+        {
+          echo "url: http://127.0.0.1:${SERVE_PORT}"
+          echo "key_env: TAI_E2E_KEY"
+          echo "provides: [mutable]"
+        } > "${SCRATCH}/target.yml"
+
+    - name: Run the suite against the image
+      id: suite
+      shell: bash
+      working-directory: ${{ steps.label.outputs.scratch }}/suite/e2e
+      env:
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+      run: |
+        set -euo pipefail
+        TAI_E2E_KEY="$(cat "${SCRATCH}/key")" TAI_E2E_TARGET="${SCRATCH}/target.yml" \
+          uv run --no-sync pytest -q --timeout=120 -o log_cli=true --junitxml="${SCRATCH}/junit.xml"
+
+    - name: At least one test ran and none failed
+      if: ${{ !cancelled() && steps.suite.outcome != 'skipped' }}
+      shell: bash
+      env:
+        REPO_ROOT: ${{ steps.label.outputs.repo-root }}
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+      run: python3 "${REPO_ROOT}/scripts/check_e2e_gate_report.py" "${SCRATCH}/junit.xml"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: ${{ !cancelled() && steps.suite.outcome != 'skipped' }}
+      with:
+        name: ${{ inputs.report-name }}
+        path: ${{ steps.label.outputs.scratch }}/junit.xml
+        if-no-files-found: error
+
+    - uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2.6
+      if: ${{ !cancelled() && steps.suite.outcome != 'skipped' }}
+      with:
+        paths: ${{ steps.label.outputs.scratch }}/junit.xml
+
+    - name: Dump the stack's logs
+      if: ${{ failure() && steps.boot.outcome != 'skipped' }}
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project-name }}
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+      run: |
+        set -euo pipefail
+        echo "::group::compose ps"
+        docker compose -p "${PROJECT}" -f "${SCRATCH}/compose/docker-compose.yml" ps -a
+        echo "::endgroup::"
+        echo "::group::compose logs"
+        docker compose -p "${PROJECT}" -f "${SCRATCH}/compose/docker-compose.yml" logs --no-color
+        echo "::endgroup::"
+
+    - name: Tear the stack down
+      if: ${{ always() && steps.boot.outcome != 'skipped' }}
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project-name }}
+        SCRATCH: ${{ steps.label.outputs.scratch }}
+        IMAGE_TAG: ${{ steps.boot.outputs.image-tag }}
+      run: |
+        set -euo pipefail
+        docker compose -p "${PROJECT}" -f "${SCRATCH}/compose/docker-compose.yml" down -v
+        if [ -n "${IMAGE_TAG}" ]; then
+          docker image rm "${IMAGE_TAG}"
+        fi
+        rm -f "${SCRATCH}/key" "${SCRATCH}/setup-token"

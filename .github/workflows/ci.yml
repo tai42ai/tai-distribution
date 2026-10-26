@@ -205,7 +205,10 @@ jobs:
   # SOURCE=local: a hosted runner checks out only this repository, so the
   # `siblings` build context does not exist here. SOURCE=pypi therefore requires
   # every first-party tai42-* package to already be published to PyPI. Gated on
-  # resolve-manifest so the manifest is proven satisfiable before the build.
+  # resolve-manifest so the manifest is proven satisfiable before the build. After
+  # the scan, the e2e gate boots the image through the shipped compose bundle and
+  # runs the tai42-e2e suite its `ai.tai42.e2e.ref` label names against it — the
+  # same gate the release build leg runs before it pushes.
   build-image:
     needs: [reuse, resolve-manifest, changes]
     if: ${{ needs.reuse.outputs.should_skip != 'true' && needs.changes.outputs.version_only != 'true' }}
@@ -217,6 +220,9 @@ jobs:
       - name: Read STUDIO_REF
         id: studio
         run: echo "ref=$(cat docker/STUDIO_REF)" >> "$GITHUB_OUTPUT"
+      - name: Read E2E_REF
+        id: e2e
+        run: echo "ref=$(cat docker/E2E_REF)" >> "$GITHUB_OUTPUT"
       - name: Build (SOURCE=pypi, amd64)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -228,6 +234,7 @@ jobs:
           build-args: |
             SOURCE=pypi
             STUDIO_REF=${{ steps.studio.outputs.ref }}
+            E2E_REF=${{ steps.e2e.outputs.ref }}
             PYPI_PROPAGATION_ATTEMPTS=${{ env.PYPI_PROPAGATION_ATTEMPTS }}
             PYPI_PROPAGATION_SLEEP=${{ env.PYPI_PROPAGATION_SLEEP }}
             SECURITY_UPDATES_EPOCH=${{ github.run_id }}-${{ github.run_attempt }}
@@ -466,6 +473,13 @@ jobs:
           severity: CRITICAL,HIGH
           vuln-type: os,library
           trivyignores: .trivyignore.yaml
+      - name: e2e gate
+        uses: ./.github/actions/e2e-gate
+        with:
+          image: ${{ env.IMAGE_REF }}
+          suite-repo-url: https://github.com/${{ github.repository_owner }}/tai42.git
+          project-name: e2e-gate-ci
+          report-name: e2e-gate-junit
 
   # Stable required status for branch protection covering the whole image path. It
   # runs on every event and passes only when every upstream job of the image path —
@@ -604,13 +618,15 @@ jobs:
           done
           python compose/tests/parity_app_env.py
 
-  # Contract-range agreement gate, the same check release.yml runs at the tag:
+  # Image-input agreement gate, the same checks release.yml runs at the tag:
   # the pinned tai42-contract version in docker/pypi-requirements.txt must lie
   # inside the contract range the pinned studio commit (docker/STUDIO_REF)
-  # declares. Checked on every PR and main push so a half pair (new pins with
-  # the old studio ref, or the reverse) cannot merge. It reads no secret; the
-  # studio repository is derived from the repository owner, so a fork checks
-  # against its own tai-studio.
+  # declares, and the e2e suite tag in docker/E2E_REF must be a tai42-e2e
+  # release tag the suite repository serves. Checked on every PR and main push
+  # so a half pair (new pins with the old studio ref, or the reverse) or an
+  # unservable suite tag cannot merge. It reads no secret; the studio and suite
+  # repositories are derived from the repository owner, so a fork checks
+  # against its own.
   alignment:
     needs: reuse
     if: ${{ needs.reuse.outputs.should_skip != 'true' }}
@@ -622,10 +638,15 @@ jobs:
         env:
           STUDIO_REPO_URL: https://github.com/${{ github.repository_owner }}/tai-studio.git
         run: uv run --python 3.13 --with packaging python scripts/check_image_alignment.py --studio-repo "$STUDIO_REPO_URL"
+      - name: Pinned e2e suite tag exists in the suite repository
+        env:
+          SUITE_REPO_URL: https://github.com/${{ github.repository_owner }}/tai42.git
+        run: python3 scripts/check_e2e_ref.py --suite-repo "$SUITE_REPO_URL"
 
   # Unit-test every script under scripts/ on every PR — among them the release
-  # alignment gate (scripts/check_image_alignment.py), so a regression in the gate
-  # is caught before it runs on a tag, and the image-input refresh
+  # alignment gates (scripts/check_image_alignment.py, scripts/check_e2e_ref.py)
+  # and the e2e gate's report check (scripts/check_e2e_gate_report.py), so a
+  # regression in a gate is caught before it runs on a tag, and the image-input refresh
   # (scripts/refresh_image_inputs.py), so a regression is caught before a release
   # dispatch runs it. The gate needs `packaging`; uv supplies the pinned
   # interpreter, pytest and packaging.

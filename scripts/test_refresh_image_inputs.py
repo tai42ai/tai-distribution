@@ -1,4 +1,4 @@
-"""Tests for refresh_image_inputs: pin and studio-ref recomputation from tags.
+"""Tests for refresh_image_inputs: pin, studio-ref and e2e-ref recomputation from tags.
 
 GitHub and PyPI are replaced by in-memory fakes built from synthetic refs and
 release listings; no test touches the network or sleeps.
@@ -246,22 +246,56 @@ def test_studio_release_commit_fails_on_a_malformed_sha():
         refresh.studio_release_commit(gh, STUDIO)
 
 
+# --- e2e ref ------------------------------------------------------------------
+
+
+def _tags(*names: str) -> dict[str, tuple]:
+    gh = FakeGitHub({MONOREPO: {"tai42-": [[ref(n, SHA_A) for n in names]]}})
+    return refresh.tagged_latest(gh, MONOREPO)
+
+
+def test_e2e_release_tag_is_the_newest_stable_suite_tag():
+    tags = _tags(
+        "tai42-e2e-v23.0.2",
+        "tai42-e2e-v24.0.1",
+        "tai42-e2e-v24.0.0",
+        "tai42-e2e-v25.0.0rc1",
+        "tai42-contract-v26.0.0",
+    )
+    assert refresh.e2e_release_tag(tags, MONOREPO) == "tai42-e2e-v24.0.1"
+
+
+def test_e2e_release_tag_fails_without_a_suite_tag():
+    tags = _tags("tai42-contract-v26.0.0", "tai42-e2e-v25.0.0rc1")
+    with pytest.raises(refresh.RefreshError, match="no release tag for tai42-e2e"):
+        refresh.e2e_release_tag(tags, MONOREPO)
+
+
+def test_e2e_release_tag_fails_when_the_newest_is_not_a_plain_release():
+    tags = _tags("tai42-e2e-v24.0.1", "tai42-e2e-v24.0.1.post1")
+    with pytest.raises(refresh.RefreshError, match="not a plain"):
+        refresh.e2e_release_tag(tags, MONOREPO)
+
+
 # --- main ---------------------------------------------------------------------
 
 
-def _repo_files(tmp_path, pins=PINS, studio_ref=SHA_A):
+def _repo_files(tmp_path, pins=PINS, studio_ref=SHA_A, e2e_ref="tai42-e2e-v9.0.0"):
     pins_file = tmp_path / "pypi-requirements.txt"
     pins_file.write_text(pins)
     ref_file = tmp_path / "STUDIO_REF"
     ref_file.write_text(f"{studio_ref}\n")
+    e2e_file = tmp_path / "E2E_REF"
+    e2e_file.write_text(f"{e2e_ref}\n")
     argv = [
         "--monorepo", MONOREPO, "--studio-repo", STUDIO,
         "--pins", str(pins_file), "--studio-ref-file", str(ref_file),
+        "--e2e-ref-file", str(e2e_file),
     ]
-    return pins_file, ref_file, argv
+    return pins_file, ref_file, e2e_file, argv
 
 
-def _github(studio_tags):
+def _github(studio_tags, e2e_tags=("tai42-e2e-v9.0.0", "tai42-e2e-v9.1.0")):
     return FakeGitHub(
         {
             MONOREPO: {
@@ -269,6 +303,7 @@ def _github(studio_tags):
                     [
                         ref("tai42-contract-v21.0.0", SHA_A),
                         ref("tai42-skeleton-v18.0.1", SHA_A),
+                        *(ref(tag, SHA_A) for tag in e2e_tags),
                     ]
                 ]
             },
@@ -283,8 +318,8 @@ PYPI_OK = {
 }
 
 
-def test_main_rewrites_both_inputs_together(tmp_path):
-    pins_file, ref_file, argv = _repo_files(tmp_path)
+def test_main_rewrites_all_three_inputs_together(tmp_path, capsys):
+    pins_file, ref_file, e2e_file, argv = _repo_files(tmp_path)
     rc = refresh.main(
         argv,
         github_get=_github([ref("v22.4.0", SHA_A), ref("v22.4.1", SHA_B)]),
@@ -294,11 +329,18 @@ def test_main_rewrites_both_inputs_together(tmp_path):
     assert rc == 0
     assert "tai42-contract==21.0.0\n" in pins_file.read_text()
     assert ref_file.read_text() == f"{SHA_B}\n"
+    assert e2e_file.read_text() == "tai42-e2e-v9.1.0\n"
+    out = capsys.readouterr().out
+    assert "tai42-contract: 20.0.0 -> 21.0.0" in out
+    assert f"STUDIO_REF: {SHA_A} -> {SHA_B} (v22.4.1)" in out
+    assert "E2E_REF: tai42-e2e-v9.0.0 -> tai42-e2e-v9.1.0" in out
 
 
-def test_main_leaves_files_byte_identical_when_already_current(tmp_path):
+def test_main_leaves_files_byte_identical_when_already_current(tmp_path, capsys):
     current = "tai42-contract==21.0.0\ntai42-skeleton[toolbox,files]==18.0.1\n"
-    pins_file, ref_file, argv = _repo_files(tmp_path, pins=current, studio_ref=SHA_B)
+    pins_file, ref_file, e2e_file, argv = _repo_files(
+        tmp_path, pins=current, studio_ref=SHA_B, e2e_ref="tai42-e2e-v9.1.0"
+    )
     rc = refresh.main(
         argv,
         github_get=_github([ref("v22.4.1", SHA_B)]),
@@ -308,10 +350,12 @@ def test_main_leaves_files_byte_identical_when_already_current(tmp_path):
     assert rc == 0
     assert pins_file.read_text() == current
     assert ref_file.read_text() == f"{SHA_B}\n"
+    assert e2e_file.read_text() == "tai42-e2e-v9.1.0\n"
+    assert "E2E_REF" not in capsys.readouterr().out
 
 
 def test_main_writes_nothing_when_the_studio_side_fails(tmp_path, capsys):
-    pins_file, ref_file, argv = _repo_files(tmp_path)
+    pins_file, ref_file, e2e_file, argv = _repo_files(tmp_path)
     rc = refresh.main(
         argv,
         github_get=_github([ref("v1.0.0-rc.1", SHA_B)]),
@@ -322,14 +366,33 @@ def test_main_writes_nothing_when_the_studio_side_fails(tmp_path, capsys):
     assert "::error::no stable" in capsys.readouterr().out
     assert pins_file.read_text() == PINS
     assert ref_file.read_text() == f"{SHA_A}\n"
+    assert e2e_file.read_text() == "tai42-e2e-v9.0.0\n"
+
+
+def test_main_writes_nothing_when_the_e2e_side_fails(tmp_path, capsys):
+    pins_file, ref_file, e2e_file, argv = _repo_files(tmp_path)
+    rc = refresh.main(
+        argv,
+        github_get=_github([ref("v22.4.1", SHA_B)], e2e_tags=()),
+        pypi=FakePyPI(PYPI_OK),
+        sleep=pytest.fail,
+    )
+    assert rc == 1
+    assert "::error::no release tag for tai42-e2e" in capsys.readouterr().out
+    assert pins_file.read_text() == PINS
+    assert ref_file.read_text() == f"{SHA_A}\n"
+    assert e2e_file.read_text() == "tai42-e2e-v9.0.0\n"
 
 
 def test_main_requires_the_repositories(tmp_path, capsys, monkeypatch):
     monkeypatch.delenv("MONOREPO", raising=False)
     monkeypatch.delenv("STUDIO_REPO", raising=False)
-    pins_file, ref_file, _ = _repo_files(tmp_path)
+    pins_file, ref_file, e2e_file, _ = _repo_files(tmp_path)
     rc = refresh.main(
-        ["--pins", str(pins_file), "--studio-ref-file", str(ref_file)],
+        [
+            "--pins", str(pins_file), "--studio-ref-file", str(ref_file),
+            "--e2e-ref-file", str(e2e_file),
+        ],
         github_get=_github([]),
         pypi=FakePyPI(PYPI_OK),
     )

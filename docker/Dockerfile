@@ -264,14 +264,23 @@ RUN apt-get update \
 # scan surface.
 RUN /usr/local/bin/python -m pip uninstall -y pip
 
+# E2E_REF is the tai42-e2e release tag (docker/E2E_REF) the release pipeline
+# runs against this image before it publishes it; the label records it. A
+# release build (SOURCE=pypi) refuses an empty value so no published image
+# carries a blank label; a local source build runs no suite, so its label is
+# empty unless a value is passed.
+ARG SOURCE
 ARG VERSION
+ARG E2E_REF
+RUN [ "$SOURCE" != "pypi" ] || test -n "$E2E_REF" || (echo "E2E_REF build-arg is required for SOURCE=pypi" >&2 && exit 1)
 LABEL org.opencontainers.image.title="tai" \
       org.opencontainers.image.description="Minimal-core tai server image: serve, backend worker, and metrics from one image; extra plugins install at runtime via the marketplace or bake into a derived image." \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.vendor="tai42" \
       org.opencontainers.image.url="https://tai42.ai" \
       org.opencontainers.image.source="https://github.com/tai42ai/tai-distribution" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      ai.tai42.e2e.ref="${E2E_REF}"
 
 # Non-root runtime user (uid 1000). The app never needs root at runtime.
 RUN groupadd --gid 1000 tai \

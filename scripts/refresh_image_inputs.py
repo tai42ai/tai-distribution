@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Recompute the release image's two inputs from the newest release tags.
+"""Recompute the release image's three inputs from the newest release tags.
 
-The release image is built from two files that must move together:
+The release image is built from three files that must move together:
 
 - `docker/pypi-requirements.txt` — exact `tai42-<name>[extras]==<version>` pins.
   The target per package is the newest stable release tag
@@ -12,15 +12,19 @@ The release image is built from two files that must move together:
 - `docker/STUDIO_REF` — the full 40-hex commit sha of the newest stable
   `v<major>.<minor>.<patch>` release tag in the studio repository. An annotated
   tag is dereferenced to the commit it points at.
+- `docker/E2E_REF` — the newest stable `tai42-e2e-v<major>.<minor>.<patch>`
+  release tag in the monorepo: the e2e suite the release pipeline runs against
+  the image, recorded as the image's `ai.tai42.e2e.ref` label.
 
-Both inputs are always recomputed from tags, never from the event that started
-the run, so any run produces the same consistent pair and a newer run supersedes
+All inputs are always recomputed from tags, never from the event that started
+the run, so any run produces the same consistent set and a newer run supersedes
 an older one losslessly.
 
 Every failure exits non-zero with a `::error::` line: a pinned package with no
 release tag, a tagged version PyPI never serves, a studio repository with no
-stable release tag, or a tag that does not resolve to a 40-hex commit sha.
-Nothing is skipped silently.
+stable release tag, a tag that does not resolve to a 40-hex commit sha, or a
+monorepo with no stable tai42-e2e release tag. Nothing is skipped silently and
+no file is written unless every input resolved.
 """
 
 from __future__ import annotations
@@ -37,6 +41,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from check_e2e_ref import is_e2e_ref
+
 USER_AGENT = "tai-distribution-refresh-image-inputs"
 PYPI_DEADLINE = 600  # seconds to wait for PyPI's index per package
 PYPI_POLL_INTERVAL = 15
@@ -45,6 +51,7 @@ PIN = re.compile(r"^(tai42-[a-z0-9-]+)(\[[^]]*\])?==(\S+)$")
 MONOREPO_TAG = re.compile(r"^refs/tags/(tai42-[a-z0-9-]+)-v(\S+)$")
 STUDIO_TAG = re.compile(r"^refs/tags/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
+E2E_COMPONENT = "tai42-e2e"
 
 VersionKey = tuple[tuple[int, ...], int]
 GitHubGet = Callable[[str], Any]
@@ -206,6 +213,19 @@ def studio_release_commit(github_get: GitHubGet, studio_repo: str) -> tuple[str,
     return ref["ref"].removeprefix("refs/tags/"), tag_commit(github_get, studio_repo, ref)
 
 
+def e2e_release_tag(tags: dict[str, tuple], monorepo: str) -> str:
+    """The newest stable tai42-e2e release tag name, from the monorepo's tag map."""
+    if E2E_COMPONENT not in tags:
+        raise RefreshError(f"no release tag for {E2E_COMPONENT} in {monorepo}")
+    tag = f"{E2E_COMPONENT}-v{tags[E2E_COMPONENT][1]}"
+    if not is_e2e_ref(tag):
+        raise RefreshError(
+            f"the newest stable {E2E_COMPONENT} tag in {monorepo} is {tag}, not a "
+            f"plain {E2E_COMPONENT}-v<major>.<minor>.<patch> release tag"
+        )
+    return tag
+
+
 def github_getter(token: str) -> GitHubGet:
     def get(path: str) -> Any:
         req = urllib.request.Request(
@@ -242,6 +262,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--studio-repo", default=os.environ.get("STUDIO_REPO"))
     parser.add_argument("--pins", default="docker/pypi-requirements.txt")
     parser.add_argument("--studio-ref-file", default="docker/STUDIO_REF")
+    parser.add_argument("--e2e-ref-file", default="docker/E2E_REF")
     return parser.parse_args(argv)
 
 
@@ -265,10 +286,11 @@ def main(
                 raise RefreshError("GH_TOKEN is required to read release tags")
             github_get = github_getter(token)
 
+        tags = tagged_latest(github_get, args.monorepo)
         pins_path = Path(args.pins)
         pins = refresh_pins(
             pins_path.read_text(encoding="utf-8"),
-            tagged_latest(github_get, args.monorepo),
+            tags,
             pypi,
             args.monorepo,
             clock=clock,
@@ -280,12 +302,19 @@ def main(
         current_ref = ref_path.read_text(encoding="utf-8").strip()
         if sha != current_ref:
             print(f"STUDIO_REF: {current_ref} -> {sha} ({tag})")
+
+        e2e_ref = e2e_release_tag(tags, args.monorepo)
+        e2e_path = Path(args.e2e_ref_file)
+        current_e2e = e2e_path.read_text(encoding="utf-8").strip()
+        if e2e_ref != current_e2e:
+            print(f"E2E_REF: {current_e2e} -> {e2e_ref}")
     except RefreshError as exc:
         print(f"::error::{exc}")
         return 1
 
     pins_path.write_text(pins, encoding="utf-8")
     ref_path.write_text(f"{sha}\n", encoding="utf-8")
+    e2e_path.write_text(f"{e2e_ref}\n", encoding="utf-8")
     return 0
 
 

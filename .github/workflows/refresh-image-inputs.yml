@@ -1,20 +1,25 @@
-# Keeps the release image's two inputs tracking the latest published releases:
-# docker/pypi-requirements.txt (the platform's `tai42-*` pins) and
-# docker/STUDIO_REF (the tai-studio commit the SPA is built from). Fired by the
+# Keeps the release image's three inputs tracking the latest published releases:
+# docker/pypi-requirements.txt (the platform's `tai42-*` pins),
+# docker/STUDIO_REF (the tai-studio commit the SPA is built from) and
+# docker/E2E_REF (the tai42-e2e suite tag the e2e gate runs against the image
+# and the image's `ai.tai42.e2e.ref` label records). Fired by the
 # monorepo's release workflow after each component publishes (platform-release),
 # by tai-studio's release workflow after it publishes (studio-release), and
 # manually via workflow_dispatch.
 #
-# The two inputs must move together: CI's alignment check refuses a pinned
+# The inputs move together: CI's alignment check refuses a pinned
 # tai42-contract outside the contract range the pinned studio commit declares,
 # so a platform major and the studio release that supports it only merge as one
-# change. Every run therefore recomputes BOTH inputs with
+# change, and the e2e suite released with a platform train is the one that
+# tests it. Every run therefore recomputes ALL three inputs with
 # scripts/refresh_image_inputs.py and lands them on one branch in one PR,
 # whichever dispatch fired it:
 # - each pin targets the newest stable monorepo release tag
 #   (tai42-<package>-v<version>), and PyPI is polled until it serves that version;
 # - STUDIO_REF is the commit of the newest stable v<major>.<minor>.<patch> tag
-#   in the studio repository.
+#   in the studio repository;
+# - E2E_REF is the newest stable tai42-e2e-v<major>.<minor>.<patch> tag in the
+#   monorepo.
 # Release tags are the authoritative, immediately-consistent record of what was
 # released, so the dispatch payload is not read: the newest run reads the full
 # final state of both repositories, and in-flight runs are safe to cancel. A
@@ -54,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/refresh_image_inputs.py
-          if git diff --quiet -- docker/pypi-requirements.txt docker/STUDIO_REF; then
+          if git diff --quiet -- docker/pypi-requirements.txt docker/STUDIO_REF docker/E2E_REF; then
             echo "changed=0" >> "$GITHUB_OUTPUT"
           else
             echo "changed=1" >> "$GITHUB_OUTPUT"
@@ -68,8 +73,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B refresh-image-inputs
-          git add docker/pypi-requirements.txt docker/STUDIO_REF
-          git commit -m "fix(image): track the latest platform and studio releases"
+          git add docker/pypi-requirements.txt docker/STUDIO_REF docker/E2E_REF
+          git commit -m "fix(image): track the latest platform, studio and e2e releases"
           git push -f origin refresh-image-inputs
           pr=$(gh pr list --head refresh-image-inputs --json url --jq '.[0].url')
           if [ -z "$pr" ]; then
