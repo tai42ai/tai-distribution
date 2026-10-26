@@ -12,9 +12,11 @@
 #
 # `.env` (this directory) holds the deployment's secrets/knobs; Compose reads it
 # automatically for ${VAR} substitution below. `config/` is bind-mounted at /app
-# and holds the app's `manifest.yml` (the file config provider's input); it may
-# also hold an optional `.env` the app loads itself. Both `.env` and `config/`
-# are git-ignored so a filled-in deployment can never be committed. The app
+# and holds the app's `manifest.yml` (the file config provider's input) and the
+# app's own `.env`, where it stores the settings an admin saves from the UI.
+# Settings this file puts in the container env are the deployment's and are
+# locked in the UI (see x-tai-app-env). Both `.env` and `config/` are
+# git-ignored so a filled-in deployment can never be committed. The app
 # writes its saved settings back into `config/` (`.env`, `manifest.yml`, the
 # write locks), so the `config-init` one-shot hands the directory to the image's
 # user (uid 1000) at every `up`; reading or editing those files by hand on the
@@ -57,31 +59,22 @@ x-tai-image: &tai-image "docker.io/tai42/tai:${TAI_VERSION:-latest}"
 # POSTGRES_PASSWORD is the "default" database's password, so a deployment has
 # exactly one DB credential to set.
 x-tai-app-env: &tai-app-env
-  # --- supervision shape marker ------------------------------------------------
-  # Pins recycle shape detection to compose so a recycle-class profile diff
-  # resolves the compose refusal list, never bare. Set here (not per service) so
-  # every app process reports the same shape.
-  TAI_SUPERVISED: compose
-  # The keys this deployment pins: every key of this anchor except the supervision
-  # pair itself. On boot and on every reload the platform applies its stored settings
-  # over the container env, so a stored copy of one of these keys would hide the value
-  # in this file, and a later edit here would silently stop taking effect. That is why
-  # the platform refuses a settings profile that changes one: edit this file and
-  # recreate the containers instead.
-  # A JSON list; keep it in step with the anchor (compose/tests/parity_app_env.py).
-  TAI_SUPERVISED_PINNED_KEYS: >-
-    ["TAI_CONFIG_MODE", "TAI_CONFIG_DIR_PATH", "TAI_MANIFEST_PATH", "TAI_BACKEND_MODULE",
-    "ACCESS_CONTROL_ENABLE", "ACCESS_CONTROL_ALWAYS_PUBLIC_PATH_PREFIXES", "TAI_BUS_REDIS_URL",
-    "SUB_MCP_REDIS_URL", "ARQ_REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND",
-    "CELERY_REDBEAT_REDIS_URL", "TAI_TOOL_RUNS_REDIS_URL", "TAI_RATE_LIMIT_REDIS_URL",
-    "INTERACTIONS_REDIS_URL", "HOOKS_REDIS_URL", "ACCESS_CONTROL_REDIS_URL",
-    "CONNECTOR_STORE_REDIS_URL", "TAI_DEFAULT_REDIS_URL", "TAI_DATABASE_DEFAULT_PG_HOST",
-    "TAI_DATABASE_DEFAULT_PG_PORT", "TAI_DATABASE_DEFAULT_PG_DB", "TAI_DATABASE_DEFAULT_PG_USER",
-    "TAI_DATABASE_DEFAULT_PG_PASSWORD", "PROMETHEUS_MULTIPROC_DIR", "STORAGE_S3_ENDPOINT",
-    "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY", "STORAGE_S3_SECURE",
-    "STORAGE_S3_REGION", "SANDBOX_DOCKER_HOST", "SANDBOX_LOCAL_ROOT",
-    "TAI_AGENTS_CLAUDE_SESSION_IMAGE", "TAI_AGENTS_LANGCHAIN_DEEP_SESSION_IMAGE",
-    "TAI_AGENTS_CLAUDE_API_KEY", "TAI_AGENTS_CLAUDE_OAUTH_TOKEN"]
+  # --- deployment-owned settings -----------------------------------------------
+  # A setting whose value is in the container env at startup belongs to the
+  # deployment: on boot and on every reload its env value wins over any copy the
+  # app has stored, the admin UI shows it locked, and the app refuses a save that
+  # sets it. That holds for every key of this anchor and of each app service's own
+  # `environment:` that is set to a non-empty value (and for the ENV the image
+  # sets); a key left empty here is not the deployment's. A key set in one
+  # service's own `environment:` is the deployment's for every service: no
+  # service applies a stored copy of it, and a service not given the value runs
+  # its default. Change one by editing this file (or the `.env` it substitutes
+  # from) and recreating the containers. A
+  # setting an admin should edit from the UI must NOT be set here: leave it out
+  # and the app stores it in `config/.env`.
+  # The app processes rely on their restart policy (`restart: unless-stopped`):
+  # a change that needs a fresh process makes the app drain and exit cleanly,
+  # and Compose starts it again.
   # --- config provider (file mode: reads /app/manifest.yml + /app/.env) -------
   TAI_CONFIG_MODE: file
   TAI_CONFIG_DIR_PATH: /app
@@ -197,23 +190,13 @@ x-tai-app-env: &tai-app-env
   #   SANDBOX_DOCKER_HOST — the sandbox-docker engine control endpoint
   #     (tcp://sandbox-engine:2376, `sandbox` profile). The mTLS client certs
   #     are a fixed RO volume mount at /certs/client, NOT env, so no cert path
-  #     ever becomes a recycle-pinned anchor key.
+  #     ever becomes a deployment-owned anchor key.
   #   SANDBOX_LOCAL_ROOT  — the sandbox-local host workspace ROOT (direct/host
   #     mode). Persistent workspaces live at <SANDBOX_LOCAL_ROOT>/<workspace_key>,
   #     so it MUST resolve to the provisioned tai-sandbox-local-data volume
   #     (mounted into serve+backend below) for the `persistent` tier to survive.
   SANDBOX_DOCKER_HOST: "${SANDBOX_DOCKER_HOST:-}"
   SANDBOX_LOCAL_ROOT: "${SANDBOX_LOCAL_ROOT:-}"
-  # --- coding agents (optional) -------------------------------------------------
-  # The agents' session images (by digest) and the claude_code operator credential
-  # (exactly one of the two). Each key has no value here, so Compose passes the
-  # `.env` value through as it is and leaves the key out of the container when
-  # `.env` does not set it: the agent's own default and its exactly-one-credential
-  # check see what the operator set, never an empty string.
-  TAI_AGENTS_CLAUDE_SESSION_IMAGE:
-  TAI_AGENTS_LANGCHAIN_DEEP_SESSION_IMAGE:
-  TAI_AGENTS_CLAUDE_API_KEY:
-  TAI_AGENTS_CLAUDE_OAUTH_TOKEN:
 
 services:
   # ---- config-init: hands config/ to the app's user ------------------------
@@ -280,16 +263,13 @@ services:
     # daemon starts answering, so the sandbox-docker provider proves that firewall
     # is in force before the first session after any engine (re)connect and refuses
     # the session if it cannot. Enabled on the session-creating services (serve,
-    # backend) only — not in the shared x-tai-app-env anchor, since it is a
-    # provider behaviour flag, not a recycle-pinned deployment value. Has no effect unless a
-    # docker sandbox provider is active (SANDBOX_DOCKER_HOST set).
+    # backend) only — not in the shared x-tai-app-env anchor, since only these two
+    # open sessions. Like every key in this `environment:`, it is deployment-owned
+    # and locked in the admin UI. Has no effect unless a docker sandbox provider is
+    # active (SANDBOX_DOCKER_HOST set).
     environment:
       <<: *tai-app-env
       SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
-      # The setup door's token, served by this process only. No value here: Compose
-      # passes the `.env` value through, and leaves the key out when `.env` does not
-      # set it, so the server mints and logs a one-time token instead.
-      TAI_SETUP_TOKEN:
       # The monitoring writer's OpenTelemetry export: the collector of the
       # `monitoring` profile, and the processor self-metrics its drop count reads.
       # Unused unless the manifest names a monitoring_module.
@@ -375,9 +355,10 @@ services:
     # daemon starts answering, so the sandbox-docker provider proves that firewall
     # is in force before the first session after any engine (re)connect and refuses
     # the session if it cannot. Enabled on the session-creating services (serve,
-    # backend) only — not in the shared x-tai-app-env anchor, since it is a
-    # provider behaviour flag, not a recycle-pinned deployment value. Has no effect unless a
-    # docker sandbox provider is active (SANDBOX_DOCKER_HOST set).
+    # backend) only — not in the shared x-tai-app-env anchor, since only these two
+    # open sessions. Like every key in this `environment:`, it is deployment-owned
+    # and locked in the admin UI. Has no effect unless a docker sandbox provider is
+    # active (SANDBOX_DOCKER_HOST set).
     environment:
       <<: *tai-app-env
       SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
