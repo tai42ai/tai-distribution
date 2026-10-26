@@ -347,7 +347,11 @@ The Compose bundle needs Docker Compose 2.20 or newer — the first release with
 Compose quickstart: in `compose/`, copy `.env.example` to `.env` and fill the
 required values (the stack refuses to start while any required secret is
 unset); create the config dir — `mkdir -p config && cp manifest.example.yml
-config/manifest.yml && touch config/.env`; then `docker compose up -d`. Optional
+config/manifest.yml && touch config/.env`; then `docker compose up -d`. The app
+writes the settings it saves back into `config/`, so at every `up` the one-shot
+`config-init` hands that directory to the image's user (uid 1000) before serve,
+backend and metrics start; reading or editing those files by hand on the host
+afterwards takes that uid. Optional
 profiles: `--profile celery` (RabbitMQ broker), `--profile minio` (S3
 storage), `--profile monitoring`
 (the OpenTelemetry collector serve and backend export monitoring records to). The `celery` and
