@@ -1,0 +1,14 @@
+<!--
+  Removes the ClickHouse system log tables Langfuse never reads. They have no TTL
+  by default and the query profiler writes trace_log continuously, so on a default
+  server they grow to dominate disk use. query_log, part_log and error_log stay:
+  they are small and serve debugging. Merged over the image's own config.
+-->
+<clickhouse>
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <metric_log remove="1"/>
+    <latency_log remove="1"/>
+</clickhouse>
