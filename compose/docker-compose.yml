@@ -75,7 +75,9 @@ x-tai-app-env: &tai-app-env
     "TAI_DATABASE_DEFAULT_PG_PORT", "TAI_DATABASE_DEFAULT_PG_DB", "TAI_DATABASE_DEFAULT_PG_USER",
     "TAI_DATABASE_DEFAULT_PG_PASSWORD", "PROMETHEUS_MULTIPROC_DIR", "STORAGE_S3_ENDPOINT",
     "STORAGE_S3_BUCKET", "STORAGE_S3_ACCESS_KEY", "STORAGE_S3_SECRET_KEY", "STORAGE_S3_SECURE",
-    "STORAGE_S3_REGION", "SANDBOX_DOCKER_HOST", "SANDBOX_LOCAL_ROOT"]
+    "STORAGE_S3_REGION", "SANDBOX_DOCKER_HOST", "SANDBOX_LOCAL_ROOT",
+    "TAI_AGENTS_CLAUDE_SESSION_IMAGE", "TAI_AGENTS_LANGCHAIN_DEEP_SESSION_IMAGE",
+    "TAI_AGENTS_CLAUDE_API_KEY", "TAI_AGENTS_CLAUDE_OAUTH_TOKEN"]
   # --- config provider (file mode: reads /app/manifest.yml + /app/.env) -------
   TAI_CONFIG_MODE: file
   TAI_CONFIG_DIR_PATH: /app
@@ -198,6 +200,16 @@ x-tai-app-env: &tai-app-env
   #     (mounted into serve+backend below) for the `persistent` tier to survive.
   SANDBOX_DOCKER_HOST: "${SANDBOX_DOCKER_HOST:-}"
   SANDBOX_LOCAL_ROOT: "${SANDBOX_LOCAL_ROOT:-}"
+  # --- coding agents (optional) -------------------------------------------------
+  # The agents' session images (by digest) and the claude_code operator credential
+  # (exactly one of the two). Each key has no value here, so Compose passes the
+  # `.env` value through as it is and leaves the key out of the container when
+  # `.env` does not set it: the agent's own default and its exactly-one-credential
+  # check see what the operator set, never an empty string.
+  TAI_AGENTS_CLAUDE_SESSION_IMAGE:
+  TAI_AGENTS_LANGCHAIN_DEEP_SESSION_IMAGE:
+  TAI_AGENTS_CLAUDE_API_KEY:
+  TAI_AGENTS_CLAUDE_OAUTH_TOKEN:
 
 services:
   # ---- db-migrate: one-shot migration runner -------------------------------
@@ -253,6 +265,10 @@ services:
     environment:
       <<: *tai-app-env
       SANDBOX_DOCKER_READINESS_PROBE_ENABLED: "1"
+      # The setup door's token, served by this process only. No value here: Compose
+      # passes the `.env` value through, and leaves the key out when `.env` does not
+      # set it, so the server mints and logs a one-time token instead.
+      TAI_SETUP_TOKEN:
       # The monitoring writer's OpenTelemetry export: the collector of the
       # `monitoring` profile, and the processor self-metrics its drop count reads.
       # Unused unless the manifest names a monitoring_module.
