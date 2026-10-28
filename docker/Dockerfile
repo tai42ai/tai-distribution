@@ -170,7 +170,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       /src/identity-redis \
       /src/sandbox-docker \
       /src/sandbox-local \
-      "msgpack>=1.2.1" \
+      "msgpack>=1.2.3" \
       "setuptools>=78.1.1" \
       "pip>=26.2.2" \
       "multidict<7" \
@@ -215,7 +215,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     for attempt in $(seq 1 "$PYPI_PROPAGATION_ATTEMPTS"); do \
       if uv pip install --refresh --only-binary=:all: --no-binary=jinja2schema,odfpy,crontab \
           -r /tmp/pypi-requirements.txt \
-          "msgpack>=1.2.1" \
+          "msgpack>=1.2.3" \
           "setuptools>=78.1.1" \
           "pip>=26.2.2" \
           "multidict<7" \
