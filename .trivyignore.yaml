@@ -10,18 +10,26 @@
 # every other advisory still fail the gate. Re-check when the image's pip version
 # moves.
 #
-# The urllib3 entries carry an expiry: pip 26.2.2 (the latest release) vendors
-# urllib3 2.7.0, and no pip release yet vendors the fixed 2.8.0, so this cannot be
-# resolved by a version bump; the expiry forces the scan to refuse it again if a
+# The urllib3 entries and the msgpack CVE-2026-114613 entry carry an expiry: pip
+# 26.2.2 (the latest release) vendors urllib3 2.7.0 and msgpack 1.1.2, and no pip
+# release yet vendors the fixed urllib3 2.8.0 or msgpack 1.2.3, so these cannot be
+# resolved by a version bump; the expiry forces the scan to refuse them again if a
 # fixed pip has not shipped by then.
 vulnerabilities:
-  # pip's vendored msgpack (pip vendors 1.1.2); the image's own msgpack is >= 1.2.1.
+  # pip's vendored msgpack (pip vendors 1.1.2); the image's own msgpack is >= 1.2.3.
   - id: GHSA-6v7p-g79w-8964
     purls:
       - pkg:pypi/msgpack@1.1.2
     statement: >-
       Accepted only for pip's vendored msgpack under pip/_vendor. The image's own
-      msgpack is >= 1.2.1.
+      msgpack is >= 1.2.3.
+  - id: CVE-2026-114613
+    purls:
+      - pkg:pypi/msgpack@1.1.2
+    expired_at: 2026-11-15
+    statement: >-
+      Accepted only for pip's vendored msgpack under pip/_vendor; no pip release
+      vendors the fix yet. The image's own msgpack is >= 1.2.3.
   # pip's vendored setuptools/pkg_resources (70.3.0); the image's own setuptools is >= 78.1.1.
   - id: CVE-2025-47273
     purls:
