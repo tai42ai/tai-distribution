@@ -412,18 +412,23 @@ services:
         condition: service_healthy
         required: false
     # The worker has no HTTP listener, so the baked serve probe (:8000/health)
-    # would leave it permanently unhealthy. Probe the bus redis instead — the
-    # worker is useless without it, and it is present under every backend leg.
+    # would leave it permanently unhealthy. The worker loop (arq or celery)
+    # writes a liveness file (TAI_BACKEND_LIVENESS_PATH, default
+    # /tmp/tai-backend-liveness) promising its next pass, and
+    # `tai42-backend-probe` exits 0 while that promise is not overdue past
+    # TAI_BACKEND_LIVENESS_GRACE, 1 when the file is stale or absent. The probe
+    # reads the container environment only, never config/.env, so a liveness
+    # setting is set in this service's `environment:` to reach both the worker
+    # and the probe. start_period covers boot (manifest-driven imports) before
+    # the loop writes its first report; a success ends it early. interval x
+    # retries adds at most 30s to the probe's own grace before the container
+    # is marked unhealthy.
     healthcheck:
-      test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - "import os,sys,redis; sys.exit(0 if redis.from_url(os.environ['TAI_BUS_REDIS_URL']).ping() else 1)"
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 90s
+      test: ["CMD", "tai42-backend-probe"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s
 
   # ---- metrics: the standalone Prometheus multiprocess reader --------------
   metrics:

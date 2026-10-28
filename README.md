@@ -72,6 +72,9 @@ run.
 there. `TAI_CONFIG_DIR_PATH` moves the dir; `TAI_MANIFEST_PATH` moves the
 manifest file alone. The serve port defaults to `8000` (`--port`, or the
 `APP_ARGS_PORT` env var); the image `HEALTHCHECK` probes `:8000/health`.
+The worker serves no HTTP, so a `tai backend worker` container overrides that
+check with the `tai42-backend-probe` exec check, which reads the worker's
+liveness file (`TAI_BACKEND_LIVENESS_PATH`) from the container environment.
 
 ### First run
 
@@ -413,6 +416,18 @@ stopped, that container refuses to start (`network … not found`); bring it bac
 Moving from a Langfuse 3.x stack: stop it and remove its volumes
 (`docker compose -f compose/langfuse/docker-compose.yml down --volumes`), then start
 this one. Nothing recorded under 3.x is carried over.
+
+### Service healthchecks
+
+Each long-running app service in `compose/docker-compose.yml` carries its own
+healthcheck in place of the image's `:8000/health` one: `serve` probes
+`:8000/health`, `metrics` probes `:8012/metrics`, and `backend` runs
+`tai42-backend-probe`, which passes while the worker loop's liveness file
+promises a pass that is not overdue past `TAI_BACKEND_LIVENESS_GRACE`. The probe
+reads the container environment only, so a `TAI_BACKEND_LIVENESS_*` setting goes
+in the `backend` service's `environment:`, never in `config/.env`. The health
+state drives `depends_on: condition: service_healthy`, `docker compose up --wait`
+and `docker compose ps`; Compose does not restart an unhealthy container.
 
 ### Deployment settings and admin settings
 
