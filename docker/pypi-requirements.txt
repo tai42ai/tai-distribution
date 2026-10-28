@@ -22,14 +22,14 @@
 # baked into a derived image, and is deliberately NOT listed here. This set MUST
 # stay identical to the venv-local install set in docker/Dockerfile — the image
 # ships one roster regardless of SOURCE.
-tai42-contract==28.0.0
-tai42-kit[langgraph-checkpoint-postgres]==16.0.0
-tai42-toolbox[http,classifier]==6.1.4
-tai42-cli==20.0.2
-tai42-skeleton[toolbox,files]==34.0.0
-tai42-agents==15.0.2
-tai42-storage-local==4.0.2
-tai42-backend-arq==9.0.0
-tai42-identity-redis==5.0.6
-tai42-sandbox-docker==3.0.6
-tai42-sandbox-local==2.3.7
+tai42-contract==28.1.0
+tai42-kit[langgraph-checkpoint-postgres]==16.0.1
+tai42-toolbox[http,classifier]==6.1.5
+tai42-cli==20.0.3
+tai42-skeleton[toolbox,files]==34.1.0
+tai42-agents==15.0.3
+tai42-storage-local==4.0.3
+tai42-backend-arq==9.0.1
+tai42-identity-redis==5.0.7
+tai42-sandbox-docker==3.0.7
+tai42-sandbox-local==2.3.8
