@@ -232,6 +232,13 @@ cosign-keyless-signed:
 | `docker.io/tai42/tai-sandbox-claude-code` (mirror `ghcr.io/tai42ai/tai-sandbox-claude-code`) | `claude-agent-sdk` + its bundled `claude` CLI (no runner code, no credentials) | `TAI_AGENTS_CLAUDE_SESSION_IMAGE` |
 | `docker.io/tai42/tai-sandbox-exec` (mirror `ghcr.io/tai42ai/tai-sandbox-exec`) | lean `sh` + `python3` + coreutils only (no SDK, no runner code, no credentials) | the `langchain_deep_agent` group's own `session_image` setting |
 
+The release lane also publishes both session images to Oracle Cloud's registry
+(OCIR) when the repository sets the Actions variable `OCIR_IMAGE_PREFIX`
+(`<region>.ocir.io/<namespace>/<path>`) and the secrets `OCI_NAMESPACE`,
+`OCI_USERNAME` and `OCI_AUTH_TOKEN`: the same tags, signed the same way, under
+`<OCIR_IMAGE_PREFIX>/tai-sandbox-claude-code` and
+`<OCIR_IMAGE_PREFIX>/tai-sandbox-exec`.
+
 Both are **consumed by digest, never by a bare tag** — every reference is the
 `…@sha256:…` form, and the intended pull posture is cosign signature
 verification:
