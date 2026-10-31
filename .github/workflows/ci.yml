@@ -274,6 +274,38 @@ jobs:
           from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
           print("postgres checkpoint backend imports:", psycopg.__version__, AsyncPostgresSaver.__name__)
           '
+      # The server spawns host-sandbox execs that leave a process orphaned on
+      # purpose, so only the container's PID 1 can reap it; the image's PID 1 must
+      # therefore be an init. The inspect line pins that the published entrypoint
+      # runs `tai` under `tini`. The probe then runs as the runtime user under that
+      # init (named as the entrypoint because the default one hands every argument
+      # to `tai`), double-forks a child that is nobody's child once its parent
+      # exits, and fails on any zombie left behind.
+      - name: The image's PID 1 is an init that reaps orphaned processes
+        run: |
+          set -euo pipefail
+          entrypoint=$(docker inspect --format '{{json .Config.Entrypoint}}' ${{ env.IMAGE_REF }})
+          if [ "${entrypoint}" != '["tini","--","tai"]' ]; then
+            echo "::error::image entrypoint is ${entrypoint}, expected [\"tini\",\"--\",\"tai\"]"
+            exit 1
+          fi
+          docker run --rm --entrypoint tini ${{ env.IMAGE_REF }} -- python -c '
+          import os, time
+          pid1 = open("/proc/1/comm").read().strip()
+          assert pid1 == "tini", f"PID 1 is {pid1}, expected tini"
+          if os.fork() == 0:
+              if os.fork() == 0:
+                  os._exit(0)  # the orphan: once its parent is gone only PID 1 can reap it
+              os._exit(0)  # its parent exits at once, orphaning it
+          os.wait()
+          time.sleep(1)
+          zombies = [
+              pid for pid in os.listdir("/proc")
+              if pid.isdigit() and open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[0] == "Z"
+          ]
+          assert not zombies, f"unreaped processes left to PID 1: {zombies}"
+          print("PID 1 is tini and reaped the orphaned process")
+          '
       # The constraint probes install each PROBE_PLUGINS entry at versions that
       # move with every core major bump: the newest release the image's pinned
       # core admits, and the newest older release built for a previous core that

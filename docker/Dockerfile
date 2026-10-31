@@ -233,7 +233,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM venv-${SOURCE} AS venv
 
 # ---------------------------------------------------------------------------
-# Final image — minimal core, non-root, one entrypoint (`tai`).
+# Final image — minimal core, non-root, one entrypoint (`tai`, under the `tini`
+# init).
 # ---------------------------------------------------------------------------
 FROM python:3.13-slim AS final
 
@@ -254,9 +255,12 @@ RUN echo "security-updates epoch: ${SECURITY_UPDATES_EPOCH}" \
 # libpq client library at runtime from the system. The slim base does not carry
 # it, so install the runtime library (not the -dev headers) in its own cached
 # layer; without it the backend fails to import the moment a deployment selects
-# it.
+# it. `tini` is the container's init: the server spawns host-sandbox execs whose
+# process-group anchor is left to PID 1 to reap, and a Python process at PID 1
+# reaps only its own children; tini reaps every orphan, forwards signals to
+# `tai` and exits with its exit code.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libpq5 \
+ && apt-get install -y --no-install-recommends libpq5 tini \
  && rm -rf /var/lib/apt/lists/*
 
 # The base interpreter's pip is unused at runtime (the app venv carries its own
@@ -333,5 +337,5 @@ USER 1000:1000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
   CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
 
-ENTRYPOINT ["tai"]
+ENTRYPOINT ["tini", "--", "tai"]
 CMD ["serve"]
