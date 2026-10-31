@@ -8,7 +8,7 @@ The official image of the [tai42 platform](https://github.com/tai42ai/tai42) —
 
 ## How to use this image
 
-The entrypoint is `tai`; the default command is `serve`.
+The entrypoint is `tai`, run under the `tini` init so the container reaps the processes an exec leaves behind and forwards signals to `tai`; the default command is `serve`.
 
 | Command | Role |
 | --- | --- |

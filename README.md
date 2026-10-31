@@ -24,7 +24,9 @@ extra tools) is **not** baked in. Add the ones you need at runtime through the
 
 ### One image, three commands
 
-The entrypoint is `tai`; the default command is `serve`.
+The entrypoint is `tai`, run under the `tini` init so the container reaps the
+processes an exec leaves behind and forwards signals to `tai`; the default
+command is `serve`.
 
 | Command | Role |
 |---|---|
