@@ -363,6 +363,22 @@ test ran (`scripts/check_e2e_gate_report.py`), stops the push. CI runs the same
 gate on the amd64 smoke image of every pull request that builds one (a pull
 request that only bumps versions builds no image).
 
+A release can also wait on a build in another repository before it publishes
+any image or the GitHub Release: the downstream build gate
+(`.github/workflows/downstream-gate.yml`). It runs when the repository sets the
+Actions variable `DOWNSTREAM_BUILD_REPO` (`<owner>/<repo>`), with
+`DOWNSTREAM_BUILD_WORKFLOW` (the workflow file) and `DOWNSTREAM_BUILD_REF` (the
+branch to run it from), and the secret `DOWNSTREAM_BUILD_TOKEN` in an
+environment named `downstream-build`, a token that may dispatch and read runs
+in that repository. The release then dispatches that workflow with the inputs
+`request_id`, `ref`, `base_digest` (the amd64 platform image digest) and
+`version` (the release tag), and publishes only when that run's job named
+`build` succeeds. The build workflow sets its `run-name` to
+`build <request_id>`, which is how the gate finds the run, and must never
+cancel a pending dispatched run: a concurrency group keeps one pending run by
+default, unless it sets `queue: max`. Without the variable the gate is skipped
+and the release publishes without it.
+
 To build and run the whole stack from source, layer the
 `docker-compose.local.yml` override on the base compose — it adds the same
 `SOURCE=local` build to every app service, so `up --build` builds the image from

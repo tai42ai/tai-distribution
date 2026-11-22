@@ -1,0 +1,130 @@
+name: Downstream build gate
+
+# Builds an image on a released platform base by dispatching a build workflow
+# in another repository and waiting for its `build` job. The build workflow
+# takes the inputs request_id, ref, base_digest and version, and sets its
+# run-name to `build <request_id>`, which is how its run is found here. A
+# cancelled build fails this gate, so the build workflow must never cancel a
+# pending dispatched run: a concurrency group keeps one pending run by default
+# and cancels it when another is queued, unless it sets `queue: max`. With
+# build_repo empty the job is skipped.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit of the image definition; empty builds the build workflow's default.
+        type: string
+        default: ''
+      base_digest:
+        description: Digest (sha256:...) of the linux/amd64 platform image to build on.
+        type: string
+        required: true
+      version:
+        description: Release tag of the platform image.
+        type: string
+        required: true
+      build_repo:
+        description: Repository (owner/name) holding the build workflow; empty skips the gate.
+        type: string
+        default: ''
+      build_workflow:
+        description: File name of the build workflow.
+        type: string
+        default: ''
+      build_ref:
+        description: Branch the build workflow is dispatched on.
+        type: string
+        default: ''
+    secrets:
+      DOWNSTREAM_BUILD_TOKEN:
+        description: Token with actions read and write on build_repo, set in the `downstream-build` environment.
+        required: true
+
+permissions: {}
+
+jobs:
+  downstream:
+    if: inputs.build_repo != ''
+    runs-on: ubuntu-24.04
+    environment: downstream-build
+    timeout-minutes: 60
+    steps:
+      - name: Dispatch the build and wait for its build job
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_BUILD_TOKEN }}
+          BUILD_REPO: ${{ inputs.build_repo }}
+          BUILD_WORKFLOW: ${{ inputs.build_workflow }}
+          BUILD_REF: ${{ inputs.build_ref }}
+          REF: ${{ inputs.ref }}
+          BASE_DIGEST: ${{ inputs.base_digest }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for name in BUILD_WORKFLOW BUILD_REF; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::${name} is empty while build_repo is set" >&2
+              exit 1
+            fi
+          done
+          # A secret that is passed but empty, as on a fork without it.
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::DOWNSTREAM_BUILD_TOKEN is empty in the downstream-build environment" >&2
+            exit 1
+          fi
+
+          # Read-only gh call with up to 5 attempts; never used for the dispatch,
+          # where a retry could start a second build.
+          gh_read() {
+            local attempt out
+            for attempt in 1 2 3 4 5; do
+              if out="$(gh "$@")"; then
+                printf '%s\n' "${out}"
+                return 0
+              fi
+              if (( attempt < 5 )); then
+                sleep $(( attempt * 5 ))
+              fi
+            done
+            echo "::error::gh $1 $2 failed after 5 attempts" >&2
+            return 1
+          }
+
+          REQUEST_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # The other run's logs are never read back; only its job outcome is.
+          gh workflow run "${BUILD_WORKFLOW}" --repo "${BUILD_REPO}" --ref "${BUILD_REF}" \
+            -f request_id="${REQUEST_ID}" \
+            -f ref="${REF}" \
+            -f base_digest="${BASE_DIGEST}" \
+            -f version="${VERSION}" > /dev/null
+          echo "Dispatched build request ${REQUEST_ID}"
+
+          RUN_ID=""
+          for _ in $(seq 60); do
+            RUN_ID="$(gh_read run list --repo "${BUILD_REPO}" --workflow "${BUILD_WORKFLOW}" \
+                --event workflow_dispatch --json databaseId,displayTitle \
+              | jq -r --arg title "build ${REQUEST_ID}" \
+                  'first(.[] | select(.displayTitle == $title) | .databaseId) // empty')"
+            [[ -n "${RUN_ID}" ]] && break
+            sleep 5
+          done
+          if [[ -z "${RUN_ID}" ]]; then
+            echo "::error::no build run titled 'build ${REQUEST_ID}' appeared" >&2
+            exit 1
+          fi
+
+          while :; do
+            VIEW="$(gh_read run view "${RUN_ID}" --repo "${BUILD_REPO}" --json status,jobs)"
+            CONCLUSION="$(jq -r 'first(.jobs[] | select(.name == "build") | .conclusion) // ""' <<< "${VIEW}")"
+            [[ -n "${CONCLUSION}" ]] && break
+            if [[ "$(jq -r '.status' <<< "${VIEW}")" == "completed" ]]; then
+              echo "::error::build run completed without a conclusion for its build job" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+          if [[ "${CONCLUSION}" != "success" ]]; then
+            echo "::error::build job concluded ${CONCLUSION}" >&2
+            exit 1
+          fi
+          echo "Build job succeeded"
