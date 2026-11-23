@@ -13,7 +13,7 @@
 #            tai42-* installed from PyPI at the exact pins in
 #            docker/pypi-requirements.txt, binary wheels only).
 ARG SOURCE=pypi
-ARG VERSION=6.1.26 # x-release-please-version
+ARG VERSION=6.1.27 # x-release-please-version
 ARG STUDIO_REF
 
 # ---------------------------------------------------------------------------
