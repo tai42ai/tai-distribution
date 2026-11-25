@@ -303,12 +303,16 @@ RUN groupadd --gid 1000 tai \
 # background_thread an idle process never purges, since jemalloc otherwise
 # purges only on its allocating threads' own ticks; with it the pages a burst
 # dirtied return over the dirty-decay period (10 s by default) while it idles.
+# PYTHONMALLOC=malloc routes the interpreter's own object allocations through
+# jemalloc too: CPython otherwise serves small objects from 1 MiB arenas it maps
+# outside malloc and unmaps only when wholly empty.
 ENV VIRTUAL_ENV=/opt/tai/venv \
     PATH=/opt/tai/venv/bin:$PATH \
     STUDIO_DIST_PATH=/opt/tai/studio-dist \
     PYTHONUNBUFFERED=1 \
     LD_PRELOAD=libjemalloc.so.2 \
-    MALLOC_CONF=background_thread:true
+    MALLOC_CONF=background_thread:true \
+    PYTHONMALLOC=malloc
 COPY --from=venv   /opt/tai/venv        /opt/tai/venv
 COPY --from=studio /studio/apps/studio/dist /opt/tai/studio-dist
 

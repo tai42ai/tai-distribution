@@ -24,14 +24,17 @@ extra tools) is **not** baked in. Add the ones you need at runtime through the
 
 The image's own processes, and every process they start with the inherited
 environment, run on the jemalloc allocator (Debian's `libjemalloc2`), set in the
-image's environment as `LD_PRELOAD=libjemalloc.so.2` and
-`MALLOC_CONF=background_thread:true`. A host-sandbox exec runs with only its
+image's environment as `LD_PRELOAD=libjemalloc.so.2`,
+`MALLOC_CONF=background_thread:true` and `PYTHONMALLOC=malloc`; the third routes
+the interpreter's own object allocations through jemalloc too, since CPython
+otherwise serves small objects from 1 MiB arenas it maps outside `malloc` and
+unmaps only when wholly empty. A host-sandbox exec runs with only its
 session's environment, so it is not preloaded. The server's processes free their
 request and job buffers after each burst of work; glibc's default allocator
 would keep those pages resident for the life of the process, while jemalloc's
 background purging returns them to the kernel over its dirty-decay period (10 s
-by default) once the process idles. A derived image inherits both variables
-unless it sets its own `LD_PRELOAD` or `MALLOC_CONF`.
+by default) once the process idles. A derived image inherits the three variables
+unless it sets its own `LD_PRELOAD`, `MALLOC_CONF` or `PYTHONMALLOC`.
 
 ### One image, three commands
 
