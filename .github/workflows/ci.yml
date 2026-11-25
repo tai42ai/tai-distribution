@@ -306,6 +306,19 @@ jobs:
           assert not zombies, f"unreaped processes left to PID 1: {zombies}"
           print("PID 1 is tini and reaped the orphaned process")
           '
+      # The image's processes, and every process they start with the inherited
+      # environment, run on jemalloc through LD_PRELOAD and MALLOC_CONF (a
+      # host-sandbox exec runs with only its session's environment); the
+      # dynamic loader only warns and falls back to glibc's
+      # malloc when a preload fails to load. The probe runs under the image's
+      # own environment, asserts the allocator is mapped into its process, runs
+      # a burst of the kit's jq jobs on a thread pool and fails unless the
+      # memory the burst freed is returned once the process is idle. The
+      # script arrives on stdin, so nothing is mounted into the image.
+      - name: The image's processes return the memory a burst freed
+        run: docker run --rm -i --entrypoint python ${{ env.IMAGE_REF }} - < scripts/image_memory_return.py
+      - name: Measure the same burst on glibc's malloc (baseline, no bound)
+        run: docker run --rm -i --env LD_PRELOAD= --env MALLOC_CONF= --entrypoint python ${{ env.IMAGE_REF }} - --glibc-baseline < scripts/image_memory_return.py
       # The constraint probes install each PROBE_PLUGINS entry at versions that
       # move with every core major bump: the newest release the image's pinned
       # core admits, and the newest older release built for a previous core that
