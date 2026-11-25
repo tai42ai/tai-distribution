@@ -317,8 +317,6 @@ jobs:
       # script arrives on stdin, so nothing is mounted into the image.
       - name: The image's processes return the memory a burst freed
         run: docker run --rm -i --entrypoint python ${{ env.IMAGE_REF }} - < scripts/image_memory_return.py
-      - name: Measure the same burst on glibc's malloc (baseline, no bound)
-        run: docker run --rm -i --env LD_PRELOAD= --env MALLOC_CONF= --entrypoint python ${{ env.IMAGE_REF }} - --glibc-baseline < scripts/image_memory_return.py
       # The constraint probes install each PROBE_PLUGINS entry at versions that
       # move with every core major bump: the newest release the image's pinned
       # core admits, and the newest older release built for a previous core that

@@ -33,9 +33,9 @@ jemalloc's share, far below glibc's.
   host, glibc 2.39, Ubuntu libjemalloc2 5.3.0-2build1, Python 3.13.7:
     glibc       base 57  peak 194  idle 183  held share 0.92
     jemalloc    base 60  peak 225  idle  90  held share 0.18  (3 runs: 0.18-0.19)
-  image, glibc 2.41, Debian libjemalloc2 5.3.0-3, Python 3.13:
-    glibc       base --  peak ---  idle ---  held share ----
-    jemalloc    base --  peak ---  idle ---  held share ----
+  image, glibc 2.41, Debian libjemalloc2 5.3.0-3, Python 3.13 (amd64 CI runner):
+    glibc       base 57  peak 199  idle 189  held share 0.93
+    jemalloc    base 61  peak 209  idle  88  held share 0.18
 
 The pure functions decide; `run` drives the burst, which imports the kit and so
 runs where the kit is installed: the image.
