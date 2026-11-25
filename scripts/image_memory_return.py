@@ -3,10 +3,14 @@
 
 The image's processes, and every process they start with the inherited
 environment, run on jemalloc (`LD_PRELOAD=libjemalloc.so.2`,
-`MALLOC_CONF=background_thread:true`); a host-sandbox exec runs with only its
-session's environment. The dynamic loader only prints a warning
-and carries on with glibc's malloc when a preload cannot be loaded, so the probe
-first asserts that `libjemalloc` is mapped into its own process.
+`MALLOC_CONF=background_thread:true`), and `PYTHONMALLOC=malloc` routes the
+interpreter's own object allocations through it too; a host-sandbox exec runs
+with only its session's environment. The dynamic loader only prints a warning
+and carries on with glibc's malloc when a preload cannot be loaded, and a
+missing `PYTHONMALLOC` leaves small objects in the interpreter's own arenas
+outside malloc; neither fails anything, so the probe first asserts that
+`libjemalloc` is mapped into its own process and that `PYTHONMALLOC=malloc` is
+in its environment.
 
 It then runs the burst a server worker sees: a pool of THREADS threads runs
 ROUNDS x JOBS jq jobs, each over a freshly built JSON document of DOC_KB,
@@ -44,12 +48,15 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 import random
 import sys
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 
 ALLOCATOR_LIBRARY = "libjemalloc"
+INTERPRETER_ALLOCATOR = "malloc"
 
 THREADS = 24
 ROUNDS = 3
@@ -82,6 +89,11 @@ def maps_library(maps_text: str, library: str) -> bool:
         if name.startswith(library):
             return True
     return False
+
+
+def interpreter_uses(environ: Mapping[str, str], allocator: str) -> bool:
+    """Whether the environment's `PYTHONMALLOC` selects `allocator`."""
+    return environ.get("PYTHONMALLOC") == allocator
 
 
 def status_kb(status_text: str, field: str) -> int:
@@ -178,6 +190,12 @@ def run() -> None:
         raise ProbeError(
             f"{ALLOCATOR_LIBRARY} is not mapped into the process: the image's"
             " LD_PRELOAD did not load it and the process runs on glibc's malloc"
+        )
+    if not interpreter_uses(os.environ, INTERPRETER_ALLOCATOR):
+        raise ProbeError(
+            f"PYTHONMALLOC is {os.environ.get('PYTHONMALLOC')!r}, not"
+            f" {INTERPRETER_ALLOCATOR!r}: the interpreter serves its small objects"
+            " from its own arenas, which bypass jemalloc"
         )
     print(f"burst: {THREADS} threads, {ROUNDS} x {JOBS} jobs of {DOC_KB} kB")
 

@@ -307,11 +307,13 @@ jobs:
           print("PID 1 is tini and reaped the orphaned process")
           '
       # The image's processes, and every process they start with the inherited
-      # environment, run on jemalloc through LD_PRELOAD and MALLOC_CONF (a
+      # environment, run on jemalloc through LD_PRELOAD and MALLOC_CONF, with
+      # PYTHONMALLOC=malloc routing the interpreter's objects through it too (a
       # host-sandbox exec runs with only its session's environment); the
       # dynamic loader only warns and falls back to glibc's
       # malloc when a preload fails to load. The probe runs under the image's
-      # own environment, asserts the allocator is mapped into its process, runs
+      # own environment, asserts the allocator is mapped into its process and
+      # the interpreter allocates through malloc, runs
       # a burst of the kit's jq jobs on a thread pool and fails unless the
       # memory the burst freed is returned once the process is idle. The
       # script arrives on stdin, so nothing is mounted into the image.

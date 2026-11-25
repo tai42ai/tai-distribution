@@ -58,6 +58,24 @@ def test_maps_ignores_anonymous_mappings():
     )
 
 
+# --- interpreter allocator ----------------------------------------------------
+
+
+def test_interpreter_uses_malloc():
+    environ = {"PYTHONMALLOC": "malloc"}
+    assert probe.interpreter_uses(environ, probe.INTERPRETER_ALLOCATOR)
+
+
+def test_interpreter_allocator_unset():
+    assert not probe.interpreter_uses({}, probe.INTERPRETER_ALLOCATOR)
+
+
+@pytest.mark.parametrize("value", ["pymalloc", "mimalloc", "malloc_debug", ""])
+def test_interpreter_allocator_other(value):
+    environ = {"PYTHONMALLOC": value}
+    assert not probe.interpreter_uses(environ, probe.INTERPRETER_ALLOCATOR)
+
+
 # --- status -------------------------------------------------------------------
 
 
