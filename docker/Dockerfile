@@ -258,9 +258,12 @@ RUN echo "security-updates epoch: ${SECURITY_UPDATES_EPOCH}" \
 # it. `tini` is the container's init: the server spawns host-sandbox execs whose
 # process-group anchor is left to PID 1 to reap, and a Python process at PID 1
 # reaps only its own children; tini reaps every orphan, forwards signals to
-# `tai` and exits with its exit code.
+# `tai` and exits with its exit code. The server's processes free their request
+# and job buffers back to the allocator, and glibc's malloc keeps those pages for
+# the life of the process; jemalloc with background purging returns them to the
+# kernel, so the image runs its processes on `libjemalloc2` (preloaded below).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libpq5 tini \
+ && apt-get install -y --no-install-recommends libpq5 tini libjemalloc2 \
  && rm -rf /var/lib/apt/lists/*
 
 # The base interpreter's pip is unused at runtime (the app venv carries its own
@@ -292,10 +295,20 @@ RUN groupadd --gid 1000 tai \
 
 # The venv keeps its absolute path so the console-script shebangs stay valid,
 # and the same interpreter exists at the same path in this base image.
+# The image's processes, and every process they start with the inherited
+# environment, exec with LD_PRELOAD and MALLOC_CONF and so run on jemalloc; a
+# host-sandbox exec runs with only its session's environment. The library name
+# carries no directory: the dynamic loader finds it on the library path of
+# either architecture. Without
+# background_thread an idle process never purges, since jemalloc otherwise
+# purges only on its allocating threads' own ticks; with it the pages a burst
+# dirtied return over the dirty-decay period (10 s by default) while it idles.
 ENV VIRTUAL_ENV=/opt/tai/venv \
     PATH=/opt/tai/venv/bin:$PATH \
     STUDIO_DIST_PATH=/opt/tai/studio-dist \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    LD_PRELOAD=libjemalloc.so.2 \
+    MALLOC_CONF=background_thread:true
 COPY --from=venv   /opt/tai/venv        /opt/tai/venv
 COPY --from=studio /studio/apps/studio/dist /opt/tai/studio-dist
 
