@@ -22,10 +22,6 @@ no short run of equal readings marks the end of the decay. The VmRSS at the end
 of the wait is the idle reading, and the probe fails unless the share of the
 growth still held there is below HELD_SHARE_MAX.
 
-`--glibc-baseline` measures the same burst on glibc's malloc (the image run with
-`LD_PRELOAD` and `MALLOC_CONF` cleared): it asserts jemalloc is NOT mapped,
-prints the numbers and the verdict the bound would give, and applies no bound.
-
 Numbers the bound is set from (VmRSS in MB; held share = (idle - base) /
 (peak - base)). HELD_SHARE_MAX sits between the two allocators: well above
 jemalloc's share, far below glibc's.
@@ -46,7 +42,6 @@ cause; no silent fallback.
 
 from __future__ import annotations
 
-import argparse
 import gc
 import json
 import random
@@ -176,24 +171,15 @@ def _idle_rss() -> int:
     return readings[-1]
 
 
-def run(glibc_baseline: bool) -> None:
+def run() -> None:
     from tai42_kit.utils.data.jq_worker import JqSource, compile_job
 
-    mapped = maps_library(_read("/proc/self/maps"), ALLOCATOR_LIBRARY)
-    if glibc_baseline and mapped:
-        raise ProbeError(
-            f"{ALLOCATOR_LIBRARY} is mapped; the baseline must run on glibc"
-        )
-    if not glibc_baseline and not mapped:
+    if not maps_library(_read("/proc/self/maps"), ALLOCATOR_LIBRARY):
         raise ProbeError(
             f"{ALLOCATOR_LIBRARY} is not mapped into the process: the image's"
             " LD_PRELOAD did not load it and the process runs on glibc's malloc"
         )
-    allocator = "glibc" if glibc_baseline else "jemalloc"
-    print(
-        f"allocator: {allocator}; burst: {THREADS} threads,"
-        f" {ROUNDS} x {JOBS} jobs of {DOC_KB} kB"
-    )
+    print(f"burst: {THREADS} threads, {ROUNDS} x {JOBS} jobs of {DOC_KB} kB")
 
     compile_job(PROGRAM_KEY, JqSource(expression=PROGRAM, prelude="", variables=()))
     with ThreadPoolExecutor(max_workers=THREADS) as pool:
@@ -205,15 +191,11 @@ def run(glibc_baseline: bool) -> None:
         peak_kb = _status("VmHWM")
 
     share = held_share(base_kb, peak_kb, idle_kb)
-    passed = within_bound(share, HELD_SHARE_MAX)
     print(
-        f"{allocator}: base {_mb(base_kb)} MB, peak {_mb(peak_kb)} MB,"
+        f"base {_mb(base_kb)} MB, peak {_mb(peak_kb)} MB,"
         f" idle {_mb(idle_kb)} MB, held share {share:.2f}, bound {HELD_SHARE_MAX}"
     )
-    if glibc_baseline:
-        print(f"the bound would {'pass' if passed else 'fail'} this run")
-        return
-    if not passed:
+    if not within_bound(share, HELD_SHARE_MAX):
         raise ProbeError(
             f"{share:.2f} of the burst's {_mb(peak_kb - base_kb)} MB growth is still"
             f" resident after {IDLE_WAIT_S} s idle, not below {HELD_SHARE_MAX}:"
@@ -221,16 +203,9 @@ def run(glibc_baseline: bool) -> None:
         )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--glibc-baseline",
-        action="store_true",
-        help="measure on glibc's malloc: assert jemalloc is not mapped, apply no bound",
-    )
-    args = parser.parse_args(argv)
+def main() -> int:
     try:
-        run(args.glibc_baseline)
+        run()
     except ProbeError as exc:
         print(f"::error::{exc}")
         return 1
